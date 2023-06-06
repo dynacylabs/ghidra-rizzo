@@ -95,6 +95,7 @@ def find_signature_matches(new_signature, curr_signature, new_functions,
 
     for signature, function in new_signature.iteritems():
         if signature in curr_signature:
+            new_func = None
             curr_func = RizzoFunctionDescriptor(curr_signature,
                                                 curr_functions,
                                                 signature)
@@ -102,11 +103,12 @@ def find_signature_matches(new_signature, curr_signature, new_functions,
                 new_func = RizzoFunctionDescriptor(new_signature,
                                                 new_functions,
                                                 signature)
+            
+                if not filter_fn or filter_fn(curr_func, new_func):
+                    signature_match[curr_func] = new_func
+            
             except:
                 key_error_count += 1
-
-            if not filter_fn or filter_fn(curr_func, new_func):
-                signature_match[curr_func] = new_func
 
     end = time.time()
 
