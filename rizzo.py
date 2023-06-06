@@ -290,6 +290,7 @@ class Rizzo(object):
         self._function_manager = self._program.getFunctionManager()
         self._address_factory = self._program.getAddressFactory()
 
+        self.signature_libary = None
         self.signatures = None
         self._strings = {}
         self._find_strings()
@@ -640,74 +641,109 @@ class Rizzo(object):
 
         return signatures
 
-    def append_signature_file(self, signature_file):
+    def load_signature_library(self, signature_library_file):
         """
-        Adds signatures from a rizzo file without overwriting existing signatures
+        Load Rizzo signatures from a file into the library variable.
 
-        :param signature_file: Full path to load signatures from.
-        :type signature_file: str
+        :param signature_library_file: Full path to load signature library from.
+        :type signature_library_file: str
 
-        :returns: Loaded signatures
-        :rtype: RizzoSignatures
+        :returns: None
+        :rtype: None
         """
-        if not os.path.exists(signature_file):
-            raise Exception("Signature file {signature_file} does not exist".format(signature_file=signature_file))
+        if not os.path.exists(signature_library_file):
+            raise Exception("Signature file {signature_library_file} does not exist".format(signature_library_file=signature_library_file))
 
-        print("Loading signatures from {signature_file}...".format(signature_file=signature_file))
-        with open(signature_file, 'rb') as rizz_file:
+        print("Loading signature library from {signature_library_file}...".format(signature_library_file=signature_library_file))
+        with open(signature_library_file, 'rb') as library_file:
             try:
-                signatures = pickle.load(rizz_file)
-                
-                formal_count_before_load = len(self._signatures.formal)
-                fuzzy_count_before_load = len(self._signatures.fuzzy)
-                strings_count_before_load = len(self._signatures.strings)
-                functions_count_before_load = len(self._signatures.functions)
-                immediates_count_before_load = len(self._signatures.immediates)
-
-                for signature, address in signatures.formal.items():
-                    self._signatures.add_formal(signature, address)
-                
-                for signature, address in signatures.fuzzy.items():
-                    self._signatures.add_fuzzy(signature, address)
-
-                for signature, address in signatures.strings.items():
-                    self._signatures.add_string(signature, address)
-
-                for signature, address in signatures.functions.items():
-                    self._signatures.add_function(signature, address)
-
-                for signature, address in signatures.immediates.items():
-                    self._signatures.add_immediate(signature, address)
-
-                self._signatures.reset_dups()
-
-                del(signatures)
-
-                formal_count_after_load = len(self._signatures.formal)
-                fuzzy_count_after_load = len(self._signatures.fuzzy)
-                strings_count_after_load = len(self._signatures.strings)
-                functions_count_after_load = len(self._signatures.functions)
-                immediates_count_after_load = len(self._signatures.immediates)
-
-                output_str = "Done!\t\tOld\tNew\n" \
-                                "Formal:\t\t{formal_before}\t{formal_after}\n" \
-                                "Fuzzy:\t\t{fuzzy_before}\t{fuzzy_after}\n" \
-                                "String:\t\t{string_before}\t{string_after}\n" \
-                                "Function:\t{function_before}\t{function_after}\n" \
-                                "Immediate:\t{immediate_before}\t{immediate_after}" \
-                                .format(formal_before=formal_count_before_load,
-                                        formal_after=formal_count_after_load,
-                                        fuzzy_before=fuzzy_count_before_load,
-                                        fuzzy_after=fuzzy_count_after_load,
-                                        string_before=strings_count_before_load,
-                                        string_after=strings_count_after_load,
-                                        function_before=functions_count_before_load,
-                                        function_after=functions_count_after_load,
-                                        immediate_before=immediates_count_before_load,
-                                        immediate_after=immediates_count_after_load)
-
-                print(output_str)
-
+                self.signature_libary = pickle.load(library_file)
             except:
                 print("This does not appear to be a Rizzo signature file.")
                 exit(1)
+        print("done.")
+
+    def add_current_program_to_library(self):
+        formal_count_before_load = len(self.signature_libary.formal)
+        fuzzy_count_before_load = len(self.signature_libary.fuzzy)
+        strings_count_before_load = len(self.signature_libary.strings)
+        functions_count_before_load = len(self.signature_libary.functions)
+        immediates_count_before_load = len(self.signature_libary.immediates)
+        formaldups_count_before_load = len(self.signature_libary.formaldups)
+        fuzzydups_count_before_load = len(self.signature_libary.fuzzydups)
+        stringdups_count_before_load = len(self.signature_libary.stringdups)
+        functiondups_count_before_load = len(self.signature_libary.functiondups)
+        immediatedups_count_before_load = len(self.signature_libary.immediatedups)
+
+        for signature, address in self._signatures.formal.items():
+            self.signature_libary.add_formal(signature, address)
+        
+        for signature, address in self._signatures.fuzzy.items():
+            self.signature_libary.add_fuzzy(signature, address)
+
+        for signature, address in self._signatures.strings.items():
+            self.signature_libary.add_string(signature, address)
+
+        for signature, address in self._signatures.functions.items():
+            self.signature_libary.add_function(signature, address)
+
+        for signature, address in self._signatures.immediates.items():
+            self.signature_libary.add_immediate(signature, address)
+
+        formal_count_after_load = len(self.signature_libary.formal)
+        fuzzy_count_after_load = len(self.signature_libary.fuzzy)
+        strings_count_after_load = len(self.signature_libary.strings)
+        functions_count_after_load = len(self.signature_libary.functions)
+        immediates_count_after_load = len(self.signature_libary.immediates)
+        formaldups_count_after_load = len(self.signature_libary.formaldups)
+        fuzzydups_count_after_load = len(self.signature_libary.fuzzydups)
+        stringdups_count_after_load = len(self.signature_libary.stringdups)
+        functiondups_count_after_load = len(self.signature_libary.functiondups)
+        immediatedups_count_after_load = len(self.signature_libary.immediatedups)
+
+        output_str = "Done! Library Change Statistics:\n" \
+                     "\t\t\t\tOld\tNew\n" \
+                     "Formal:\t\t{formal_before}\t{formal_after}\n" \
+                     "Fuzzy:\t\t{fuzzy_before}\t{fuzzy_after}\n" \
+                     "String:\t\t{string_before}\t{string_after}\n" \
+                     "Function:\t{function_before}\t{function_after}\n" \
+                     "Immediate:\t{immediate_before}\t{immediate_after}\n" \
+                     "FormalDups:\t\t{formaldups_before}\t{formaldups_after}\n" \
+                     "FuzzyDups:\t\t{fuzzydups_before}\t{fuzzydups_after}\n" \
+                     "StringDups:\t\t{stringdups_before}\t{stringdups_after}\n" \
+                     "FunctionDups:\t{functiondups_before}\t{functiondups_after}\n" \
+                     "ImmediateDups:\t{immediatedups_before}\t{immediatedups_after}" \
+                     .format(formal_before=formal_count_before_load,
+                             formal_after=formal_count_after_load,
+                             fuzzy_before=fuzzy_count_before_load,
+                             fuzzy_after=fuzzy_count_after_load,
+                             string_before=strings_count_before_load,
+                             string_after=strings_count_after_load,
+                             function_before=functions_count_before_load,
+                             function_after=functions_count_after_load,
+                             immediate_before=immediates_count_before_load,
+                             immediate_after=immediates_count_after_load,
+                             formaldups_before=formaldups_count_before_load,
+                             formaldups_after=formaldups_count_after_load,
+                             fuzzydups_before=fuzzydups_count_before_load,
+                             fuzzydups_after=fuzzydups_count_after_load,
+                             stringdups_before=stringdups_count_before_load,
+                             stringdups_after=stringdups_count_after_load,
+                             functiondups_before=functiondups_count_before_load,
+                             functiondups_after=functiondups_count_after_load,
+                             immediatedups_before=immediatedups_count_before_load,
+                             immediatedups_after=immediatedups_count_after_load)
+
+        print(output_str)
+    
+    def save_signature_library(self, signature_library_file):
+        """
+        Save Rizzo signature library to the supplied signature file.
+
+        :param signature_file: Full path to save signatures.
+        :type signature_file: str
+        """
+        print("Saving signature to {signature_library_file}...".format(signature_library_file=signature_library_file))
+        with open(signature_library_file, 'wb') as library_file:
+            pickle.dump(self.signature_libary, library_file)
+        print("done.")
