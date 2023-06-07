@@ -12,4 +12,4 @@ print 'Applying Rizzo signatures, this may take a few minutes...'
 
 rizz = rizzo.Rizzo(currentProgram)
 signatures = rizz.load(file_path)
-rizz.apply(signatures)
+rename_count = rizz.apply(signatures)  # Updated rizzo.apply to return how many functions were renamed

@@ -395,6 +395,8 @@ class Rizzo(object):
 
         print("Renamed {function_count} functions.".format(function_count=rename_count))
 
+        return rename_count
+
     def _find_match(self, signatures):
         """
         Find matches to signatures in the current program.
