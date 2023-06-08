@@ -22,10 +22,8 @@ for rizzo_file in rizzo_files_glob:
     print("Loading signatures from: {}".format(rizzo_file))
 
     signatures = rizz.load(rizzo_file)
-    rizz.apply(signatures)
-    del(signatures)
-
     rename_count = rizz.apply(signatures)
     total_rename_count += rename_count
+    del(signatures)
 
 print("Renamed a total of {total_rename_count} functions.".format(total_rename_count=total_rename_count))
