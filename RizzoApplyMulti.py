@@ -13,7 +13,6 @@ directory_of_rizzo_files = str(askDirectory("Directory", "Choose directory:"))
 directory_to_glob = directory_of_rizzo_files + "/*.riz"
 rizzo_files_glob = glob.glob(directory_to_glob)
 
-print(rizzo_files_glob)
 print("Loading Current Program Signatures...")
 rizz = rizzo.Rizzo(currentProgram)
 
