@@ -2,12 +2,183 @@ import os
 import time
 import pickle
 
-import utils
-
 from ghidra.program.model.block import BasicBlockModel
 from ghidra.program.model.symbol import SourceType
 from ghidra.program.flatapi import FlatProgramAPI
 from ghidra.program.model.symbol import RefType
+
+
+def get_instruction_list(code_manager, function):
+    """
+    Get list of instructions in the function.
+
+    :param function: Function to parse for instruction list.
+
+    :returns: List of instructions.
+    """
+    if function is None:
+        return []
+    function_bounds = function.getBody()
+    function_instructions = code_manager.getInstructions(function_bounds, True)
+    return function_instructions
+
+
+def get_function(function_manager, address):
+    """
+    Return the function that contains the address. 
+
+    :param address: Address within function.
+
+    :returns: Function that contains the provided address.
+    """
+    return function_manager.getFunctionContaining(address)
+
+
+def is_call_instruction(instruction):
+    """
+    Determine if an instruction calls a function.
+
+    :param instruction: Instruction to inspect.
+    :type instruction: ghidra.program.model.listing.Instruction
+
+    :returns: True if the instruction is a call, false otherwise.
+    :rtype: bool
+    """
+    if not instruction:
+        return False
+
+    flow_type = instruction.getFlowType()
+    return flow_type.isCall()
+
+
+def is_jump_instruction(instruction):
+    """
+    Determine if instruction is a jump.
+
+    :param instruction: Instruction to inspect.
+    :type instruction: ghidra.program.model.listing.Instruction
+
+    :returns: True if the instruction is a jump, false otherwise.
+    :rtype: bool
+    """
+    if not instruction:
+        return False
+
+    flow_type = instruction.getFlowType()
+    return flow_type.isJump()
+
+
+def get_processor(current_program):
+    """
+    Get string representing the current programs processor.
+
+    :param current_program: Current program loaded in Ghidra.
+    :type current_program: ghidra.program.model.listing.Program.
+    """
+    language = current_program.getLanguage()
+    return language.getProcessor().toString()
+
+
+def find_function(current_program, function_name):
+    """
+    Find a function, by name, in the current program.
+
+    :param current_program: Current program loaded in Ghidra.
+    :type current_program: ghidra.program.model.listing.Program
+
+    :param function_name: Function to search for.
+    :type function_name: str
+    """
+    listing = current_program.getListing()
+    if listing:
+        return listing.getGlobalFunctions(function_name)
+    return []
+
+
+def address_to_int(address):
+    """
+    Convert Ghidra address to integer.
+
+    :param address: Address to convert to integer.
+    :type address: ghidra.program.model.address.Address
+
+    :returns: Integer representation of the address.
+    :rtype: int
+    """
+    return int(address.toString(), 16)
+
+
+def allowed_processors(current_program, processor_list):
+    """
+    Function to prevent scripts from running against unsupported processors.
+
+    :param current_program: Current program loaded in Ghidra.
+    :type current_program: ghidra.program.model.listing.Program
+
+    :param processor_list: List of supported processors.
+    :type processor_list: list(str)
+    """
+    curr_processor = get_processor(current_program)
+
+    if curr_processor not in processor_list:
+        print("{current_processor} is not a valid processor for this script. Supported ' \
+            'processors are: {suppored_processors}".format(current_processor=curr_processor,
+                                                           supported_procesors=processor_list))
+        exit(1)
+
+
+def table_pretty_print(title, entries):
+    """
+    Print a simple table to the terminal.
+
+    :param title: Title of the table.
+    :type title: list
+
+    :param entries: Entries to print in the table.
+    :type entries: list(list(str))
+    """
+    # Pad entries to be the same length
+    entries = [entry + ([''] * (len(title) - len(entry))) for entry in entries]
+    lines = [title] + entries
+
+    # Find the largest entry in each column so it can be used later
+    # for the format string. Drop title entries if an entire column is empty.
+    max_line_len = []
+    for i in range(0, len(title)):
+        column_lengths = [len(line[i]) for line in lines]
+        if sum(column_lengths[1:]) == 0:
+            title = title[:i]
+            break
+        max_line_len.append(max(column_lengths))
+
+    # Account for largest entry, spaces, and '|' characters on each line.
+    separator = '=' * (sum(max_line_len) + (len(title) * 3) + 1)
+    spacer = '|'
+    format_specifier = '{:<{width}}'
+
+    # First block prints the title and '=' characters to make a title
+    # border
+    print(separator)
+    print(spacer)
+
+    for width, column in zip(max_line_len, title):
+        print_string = spacer
+        print_string += format_specifier.format(column, width=width)
+        print_string += spacer
+
+    print(print_string)
+    print("")
+    print(separator)
+
+    # Print the actual entries.
+    for entry in entries:
+        print(spacer)
+        print_string = ""
+        for width, column in zip(max_line_len, entry):
+            print_string += format_specifier.format(column, width=width)
+            print_string += spacer
+        print("")
+    print(separator)
 
 
 def is_code_ref(reference):
@@ -384,8 +555,7 @@ class Rizzo(object):
                 for curr_block, new_block in block_match.iteritems():
                     for curr_function, new_function in \
                             zip(curr_block.functions, new_block.functions):
-                        functions = utils.find_function(
-                            self._program, curr_function)
+                        functions = find_function(self._program, curr_function)
                         if len(functions) == 1:
                             if new_function not in renamed:
                                 renamed.append(new_function)
@@ -618,7 +788,7 @@ class Rizzo(object):
                     curr_string.xrefs[0].fromAddress)
                 if function:
                     string_hash = self._signature_hash(curr_string.value)
-                    entry = utils.address_to_int(function.getEntryPoint())
+                    entry = address_to_int(function.getEntryPoint())
                     signatures.add_string(string_hash, entry)
 
         # Formal, fuzzy, and immediate-based function signatures
@@ -631,7 +801,7 @@ class Rizzo(object):
                 ''.join([str(f) for (_, f, _, _) in hashed_function_blocks]))
             immediate = [str(i) for (_, _, i, _) in hashed_function_blocks]
 
-            function_entry = utils.address_to_int(function.getEntryPoint())
+            function_entry = address_to_int(function.getEntryPoint())
             signatures.functions[function_entry] = (
                 function.getName(), hashed_function_blocks)
 
