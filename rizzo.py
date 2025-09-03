@@ -6,6 +6,10 @@ from ghidra.program.model.block import BasicBlockModel
 from ghidra.program.model.symbol import SourceType
 from ghidra.program.flatapi import FlatProgramAPI
 from ghidra.program.model.symbol import RefType
+from ghidra.program.model.data import DataTypeManager
+from ghidra.program.model.listing import ParameterImpl, LocalVariableImpl, Function, CodeUnit
+from ghidra.program.model.pcode import HighFunctionDBUtil
+from ghidra.app.decompiler import DecompInterface
 
 
 def get_instruction_list(code_manager, function):
@@ -229,6 +233,541 @@ def is_call_instruction(instruction):
     return False
 
 
+def extract_function_signature(function):
+    """
+    Extract function signature information including return type and parameters.
+    
+    :param function: Function to extract signature from.
+    :type function: ghidra.program.model.listing.Function
+    
+    :returns: Dictionary containing signature information.
+    :rtype: dict
+    """
+    if not function:
+        return None
+        
+    signature_data = {
+        'return_type': None,
+        'calling_convention': None,
+        'parameters': []
+    }
+    
+    try:
+        # Get return type
+        return_type = function.getReturnType()
+        if return_type:
+            signature_data['return_type'] = return_type.getName()
+        
+        # Get calling convention
+        calling_convention = function.getCallingConventionName()
+        if calling_convention:
+            signature_data['calling_convention'] = calling_convention
+            
+        # Get parameters
+        parameters = function.getParameters()
+        for param in parameters:
+            param_data = {
+                'name': param.getName(),
+                'data_type': param.getDataType().getName() if param.getDataType() else None,
+                'ordinal': param.getOrdinal(),
+                'comment': param.getComment()
+            }
+            signature_data['parameters'].append(param_data)
+            
+    except Exception as e:
+        print("Warning: Could not extract complete signature for function {}: {}".format(
+            function.getName() if function else "Unknown", str(e)))
+    
+    return signature_data
+
+
+def extract_function_variables(function, program=None):
+    """
+    Extract comprehensive variable information from a function using high-level function analysis.
+    
+    :param function: Function to extract variables from.
+    :type function: ghidra.program.model.listing.Function
+    
+    :param program: Current program (needed for decompiler interface)
+    :type program: ghidra.program.model.listing.Program
+    
+    :returns: Dictionary containing all variable information including high-level symbols.
+    :rtype: dict
+    """
+    if not function:
+        return {}
+        
+    variables_data = {
+        'parameters': [],
+        'local_variables': [],
+        'high_level_symbols': []
+    }
+    
+    try:
+        # Extract function parameters (more robust than before)
+        parameters = function.getParameters()
+        for param in parameters:
+            param_data = {
+                'name': param.getName(),
+                'data_type': param.getDataType().getName() if param.getDataType() else None,
+                'ordinal': param.getOrdinal(),
+                'comment': param.getComment(),
+                'storage': str(param.getVariableStorage()) if hasattr(param, 'getVariableStorage') else None,
+                'length': param.getLength()
+            }
+            variables_data['parameters'].append(param_data)
+        
+        # Extract local variables (basic approach for backward compatibility)
+        local_variables = function.getLocalVariables()
+        for var in local_variables:
+            var_data = {
+                'name': var.getName(),
+                'data_type': var.getDataType().getName() if var.getDataType() else None,
+                'stack_offset': var.getStackOffset() if hasattr(var, 'getStackOffset') else None,
+                'comment': var.getComment(),
+                'length': var.getLength(),
+                'storage': str(var.getVariableStorage()) if hasattr(var, 'getVariableStorage') else None,
+            }
+            variables_data['local_variables'].append(var_data)
+        
+        # Extract high-level symbols using decompiler interface (the robust approach)
+        if program:
+            decompiler = DecompInterface()
+            decompiler.openProgram(program)
+            try:
+                # Decompile function to get high-level representation
+                decompiled_result = decompiler.decompileFunction(function, 120, None)
+                
+                if decompiled_result and decompiled_result.decompileCompleted():
+                    high_func = decompiled_result.getHighFunction()
+                    if high_func:
+                        # Get all symbols from the high-level function
+                        local_symbols = high_func.getLocalSymbolMap().getSymbols()
+                        
+                        for symbol in local_symbols:
+                            symbol_data = {
+                                'name': symbol.getName(),
+                                'data_type': symbol.getDataType().getName() if symbol.getDataType() else None,
+                                'category': symbol.getCategoryString() if hasattr(symbol, 'getCategoryString') else None,
+                                'storage': str(symbol.getStorage()) if hasattr(symbol, 'getStorage') else None,
+                                'size': symbol.getSize() if hasattr(symbol, 'getSize') else None,
+                                'is_parameter': symbol.isParameter() if hasattr(symbol, 'isParameter') else False,
+                                'slot': symbol.getSlot() if hasattr(symbol, 'getSlot') else None,
+                            }
+                            variables_data['high_level_symbols'].append(symbol_data)
+            finally:
+                decompiler.dispose()
+            
+    except Exception as e:
+        print("Warning: Could not extract complete variables for function {}: {}".format(
+            function.getName() if function else "Unknown", str(e)))
+    
+    return variables_data
+
+
+def extract_function_comments(function, program=None):
+    """
+    Extract comprehensive comments associated with a function using CodeUnit interface.
+    
+    :param function: Function to extract comments from.
+    :type function: ghidra.program.model.listing.Function
+    
+    :param program: Current program (needed for CodeUnit access)
+    :type program: ghidra.program.model.listing.Program
+    
+    :returns: Dictionary containing different types of comments.
+    :rtype: dict
+    """
+    if not function:
+        return {}
+        
+    comments = {
+        'comment': None,
+        'plate_comment': None,
+        'pre_comment': None,
+        'post_comment': None,
+        'eol_comment': None,
+        'repeatable_comment': None
+    }
+    
+    try:
+        # Extract basic function comments (legacy approach)
+        comments['comment'] = function.getComment()
+        
+        # Extract comments using CodeUnit approach (more robust like ai_auto_analysis)
+        if program:
+            listing = program.getListing()
+            entry_point = function.getEntryPoint()
+            function_code_unit = listing.getCodeUnitAt(entry_point)
+            
+            if function_code_unit:
+                comments['plate_comment'] = function_code_unit.getComment(CodeUnit.PLATE_COMMENT)
+                comments['pre_comment'] = function_code_unit.getComment(CodeUnit.PRE_COMMENT)
+                comments['post_comment'] = function_code_unit.getComment(CodeUnit.POST_COMMENT)
+                comments['eol_comment'] = function_code_unit.getComment(CodeUnit.EOL_COMMENT)
+                comments['repeatable_comment'] = function_code_unit.getComment(CodeUnit.REPEATABLE_COMMENT)
+        
+    except Exception as e:
+        print("Warning: Could not extract complete comments for function {}: {}".format(
+            function.getName() if function else "Unknown", str(e)))
+    
+    return comments
+
+
+def apply_function_comments(function, comments_data, program=None):
+    """
+    Apply comprehensive comments to a function using CodeUnit interface.
+    
+    :param function: Function to apply comments to.
+    :type function: ghidra.program.model.listing.Function
+    
+    :param comments_data: Comments data to apply.
+    :type comments_data: dict
+    
+    :param program: Current program (needed for CodeUnit access)
+    :type program: ghidra.program.model.listing.Program
+    
+    :returns: True if successful, False otherwise.
+    :rtype: bool
+    """
+    if not function or not comments_data:
+        return False
+        
+    success = False
+    
+    try:
+        # Apply basic function comment (legacy approach for compatibility)
+        if comments_data.get('comment'):
+            try:
+                function.setComment(comments_data['comment'])
+                success = True
+                print("  Applied function comment")
+            except Exception as e:
+                print("  Warning: Could not apply function comment: {}".format(str(e)))
+        
+        # Apply comments using CodeUnit approach (robust like ai_auto_analysis)
+        if program:
+            listing = program.getListing()
+            entry_point = function.getEntryPoint()
+            function_code_unit = listing.getCodeUnitAt(entry_point)
+            
+            if function_code_unit:
+                # Apply plate comment (appears at top of function)
+                if comments_data.get('plate_comment'):
+                    try:
+                        function_code_unit.setComment(CodeUnit.PLATE_COMMENT, comments_data['plate_comment'])
+                        success = True
+                        print("  Applied plate comment")
+                    except Exception as e:
+                        print("  Warning: Could not apply plate comment: {}".format(str(e)))
+                
+                # Apply pre comment (before function)
+                if comments_data.get('pre_comment'):
+                    try:
+                        function_code_unit.setComment(CodeUnit.PRE_COMMENT, comments_data['pre_comment'])
+                        success = True
+                        print("  Applied pre comment")
+                    except Exception as e:
+                        print("  Warning: Could not apply pre comment: {}".format(str(e)))
+                
+                # Apply post comment (after function)
+                if comments_data.get('post_comment'):
+                    try:
+                        function_code_unit.setComment(CodeUnit.POST_COMMENT, comments_data['post_comment'])
+                        success = True
+                        print("  Applied post comment")
+                    except Exception as e:
+                        print("  Warning: Could not apply post comment: {}".format(str(e)))
+                
+                # Apply end-of-line comment
+                if comments_data.get('eol_comment'):
+                    try:
+                        function_code_unit.setComment(CodeUnit.EOL_COMMENT, comments_data['eol_comment'])
+                        success = True
+                        print("  Applied EOL comment")
+                    except Exception as e:
+                        print("  Warning: Could not apply EOL comment: {}".format(str(e)))
+                
+                # Apply repeatable comment
+                if comments_data.get('repeatable_comment'):
+                    try:
+                        function_code_unit.setComment(CodeUnit.REPEATABLE_COMMENT, comments_data['repeatable_comment'])
+                        success = True
+                        print("  Applied repeatable comment")
+                    except Exception as e:
+                        print("  Warning: Could not apply repeatable comment: {}".format(str(e)))
+        
+        return success
+        
+    except Exception as e:
+        print("Warning: Could not apply comments to function {}: {}".format(
+            function.getName() if function else "Unknown", str(e)))
+        return False
+
+
+def apply_function_signature(function, signature_data):
+    """
+    Apply signature information to a function.
+    
+    :param function: Function to apply signature to.
+    :type function: ghidra.program.model.listing.Function
+    
+    :param signature_data: Signature data to apply.
+    :type signature_data: dict
+    
+    :returns: True if successful, False otherwise.
+    :rtype: bool
+    """
+    if not function or not signature_data:
+        return False
+        
+    success = False
+    
+    try:
+        # Apply return type if available
+        return_type_name = signature_data.get('return_type')
+        if return_type_name and return_type_name != 'void':
+            try:
+                data_type_manager = function.getProgram().getDataTypeManager()
+                return_type = data_type_manager.getDataType(return_type_name)
+                if return_type:
+                    function.setReturnType(return_type, SourceType.USER_DEFINED)
+                    success = True
+                    print("  Applied return type: {}".format(return_type_name))
+            except Exception as e:
+                print("  Warning: Could not apply return type {}: {}".format(return_type_name, str(e)))
+        
+        # Apply calling convention if available  
+        calling_convention = signature_data.get('calling_convention')
+        if calling_convention:
+            try:
+                function.setCallingConvention(calling_convention)
+                success = True
+                print("  Applied calling convention: {}".format(calling_convention))
+            except Exception as e:
+                print("  Warning: Could not apply calling convention {}: {}".format(calling_convention, str(e)))
+            
+        # Apply parameters if available
+        parameters_data = signature_data.get('parameters', [])
+        if parameters_data:
+            try:
+                data_type_manager = function.getProgram().getDataTypeManager()
+                new_params = []
+                
+                for param_data in parameters_data:
+                    param_name = param_data.get('name', 'param')
+                    param_type_name = param_data.get('data_type')
+                    param_comment = param_data.get('comment')
+                    
+                    if param_type_name:
+                        param_type = data_type_manager.getDataType(param_type_name)
+                        if param_type:
+                            param = ParameterImpl(param_name, param_type, function.getProgram())
+                            if param_comment:
+                                param.setComment(param_comment)
+                            new_params.append(param)
+                
+                if new_params:
+                    function.replaceParameters(new_params, 
+                        Function.FunctionUpdateType.DYNAMIC_STORAGE_ALL_PARAMS, 
+                        True, SourceType.USER_DEFINED)
+                    success = True
+                    print("  Applied {} parameter(s)".format(len(new_params)))
+            except Exception as e:
+                print("  Warning: Could not apply parameters: {}".format(str(e)))
+        
+        return success
+        
+    except Exception as e:
+        print("Warning: Could not apply signature to function {}: {}".format(
+            function.getName() if function else "Unknown", str(e)))
+        return False
+
+
+def apply_function_variables(function, variables_data, program=None):
+    """
+    Apply comprehensive variable information to a function using high-level function analysis.
+    
+    :param function: Function to apply variables to.
+    :type function: ghidra.program.model.listing.Function
+    
+    :param variables_data: Comprehensive variables data to apply.
+    :type variables_data: dict
+    
+    :param program: Current program (needed for decompiler interface)
+    :type program: ghidra.program.model.listing.Program
+    
+    :returns: True if successful, False otherwise.
+    :rtype: bool
+    """
+    if not function or not variables_data:
+        return False
+        
+    success = False
+    
+    try:
+        # Apply parameters (robust approach)
+        parameters_data = variables_data.get('parameters', [])
+        if parameters_data:
+            try:
+                data_type_manager = function.getProgram().getDataTypeManager()
+                new_params = []
+                
+                for param_data in parameters_data:
+                    param_name = param_data.get('name', 'param')
+                    param_type_name = param_data.get('data_type')
+                    param_comment = param_data.get('comment')
+                    
+                    if param_type_name:
+                        param_type = data_type_manager.getDataType(param_type_name)
+                        if param_type:
+                            param = ParameterImpl(param_name, param_type, function.getProgram())
+                            if param_comment:
+                                param.setComment(param_comment)
+                            new_params.append(param)
+                
+                if new_params:
+                    function.replaceParameters(new_params, 
+                        Function.FunctionUpdateType.DYNAMIC_STORAGE_ALL_PARAMS, 
+                        True, SourceType.USER_DEFINED)
+                    success = True
+                    print("  Applied {} parameter(s)".format(len(new_params)))
+            except Exception as e:
+                print("  Warning: Could not apply parameters: {}".format(str(e)))
+        
+        # Apply high-level symbols (the robust approach used by ai_auto_analysis)
+        high_level_symbols = variables_data.get('high_level_symbols', [])
+        if high_level_symbols and program:
+            try:
+                decompiler = DecompInterface()
+                decompiler.openProgram(program)
+                high_func_db_util = HighFunctionDBUtil()
+                
+                try:
+                    # Decompile function to get high-level representation  
+                    decompiled_result = decompiler.decompileFunction(function, 120, None)
+                    
+                    if decompiled_result and decompiled_result.decompileCompleted():
+                        high_func = decompiled_result.getHighFunction()
+                        if high_func:
+                            # Get current symbols from the high-level function
+                            current_symbols = high_func.getLocalSymbolMap().getSymbols()
+                            data_type_manager = program.getDataTypeManager()
+                            
+                            # Create mapping of symbol names to symbol objects
+                            symbol_map = {symbol.getName(): symbol for symbol in current_symbols}
+                            
+                            # Apply stored high-level symbol information
+                            for symbol_data in high_level_symbols:
+                                symbol_name = symbol_data.get('name')
+                                new_type_name = symbol_data.get('data_type')
+                                
+                                if symbol_name in symbol_map and new_type_name:
+                                    symbol = symbol_map[symbol_name]
+                                    new_data_type = data_type_manager.getDataType(new_type_name)
+                                    
+                                    if new_data_type:
+                                        try:
+                                            # Update variable using high-level DB utilities
+                                            high_func_db_util.updateDBVariable(
+                                                symbol, symbol_name, new_data_type, SourceType.USER_DEFINED
+                                            )
+                                            
+                                            # Commit changes to database
+                                            high_func_db_util.commitParamsToDatabase(
+                                                high_func,
+                                                True,
+                                                HighFunctionDBUtil.ReturnCommitOption.COMMIT,
+                                                SourceType.USER_DEFINED,
+                                            )
+                                            success = True
+                                            
+                                        except Exception as e:
+                                            print("  Warning: Could not update symbol {}: {}".format(symbol_name, str(e)))
+                                            
+                finally:
+                    decompiler.dispose()
+                    
+            except Exception as e:
+                print("  Warning: Could not apply high-level symbols: {}".format(str(e)))
+        
+        # Apply local variables (fallback/additional approach)
+        local_variables_data = variables_data.get('local_variables', [])
+        if local_variables_data:
+            try:
+                data_type_manager = function.getProgram().getDataTypeManager()
+                
+                for var_data in local_variables_data:
+                    var_name = var_data.get('name')
+                    var_type_name = var_data.get('data_type')
+                    var_comment = var_data.get('comment')
+                    stack_offset = var_data.get('stack_offset')
+                    
+                    if var_name and var_type_name:
+                        var_type = data_type_manager.getDataType(var_type_name)
+                        if var_type and stack_offset is not None:
+                            try:
+                                # Create local variable (basic approach for compatibility)
+                                local_var = function.addLocalVariable(
+                                    LocalVariableImpl(
+                                        var_name, var_type, stack_offset, function.getProgram()),
+                                    SourceType.USER_DEFINED)
+                                
+                                if local_var and var_comment:
+                                    local_var.setComment(var_comment)
+                                success = True
+                                    
+                            except Exception as var_e:
+                                print("  Warning: Could not create variable {}: {}".format(var_name, str(var_e)))
+                
+            except Exception as e:
+                print("  Warning: Could not apply local variables: {}".format(str(e)))
+        
+        return success
+        
+    except Exception as e:
+        print("Warning: Could not apply variables to function {}: {}".format(
+            function.getName() if function else "Unknown", str(e)))
+        return False
+
+
+def apply_function_comments(function, comments_data):
+    """
+    Apply comments to a function.
+    
+    :param function: Function to apply comments to.
+    :type function: ghidra.program.model.listing.Function
+    
+    :param comments_data: Comments data to apply.
+    :type comments_data: dict
+    
+    :returns: True if successful, False otherwise.
+    :rtype: bool
+    """
+    if not function or not comments_data:
+        return False
+        
+    try:
+        if comments_data.get('comment'):
+            function.setComment(comments_data['comment'])
+            
+        if comments_data.get('plate_comment'):
+            function.setPlateComment(comments_data['plate_comment'])
+            
+        if comments_data.get('pre_comment'):
+            function.setPreComment(comments_data['pre_comment'])
+            
+        if comments_data.get('post_comment'):
+            function.setPostComment(comments_data['post_comment'])
+        
+        return True
+        
+    except Exception as e:
+        print("Warning: Could not apply comments to function {}: {}".format(
+            function.getName() if function else "Unknown", str(e)))
+        return False
+
+
 def find_signature_matches(new_signature, curr_signature, new_functions,
                            curr_functions, signature_type, filter_fn=None):
     """
@@ -325,8 +864,18 @@ class RizzoFunctionDescriptor(object):
 
     def __init__(self, signatures, functions, key):
         self.address = signatures[key]
-        self.name = functions[self.address][0]
-        self.blocks = functions[self.address][1]
+        function_data = functions[self.address]
+        self.name = function_data[0]
+        self.blocks = function_data[1]
+        # Enhanced metadata (added for enhanced functionality)
+        self.signature = function_data[2] if len(function_data) > 2 else None
+        self.variables = function_data[3] if len(function_data) > 3 else {}
+        self.comment = function_data[4] if len(function_data) > 4 else None
+        self.plate_comment = function_data[5] if len(function_data) > 5 else None
+        self.pre_comment = function_data[6] if len(function_data) > 6 else None
+        self.post_comment = function_data[7] if len(function_data) > 7 else None
+        self.eol_comment = function_data[8] if len(function_data) > 8 else None
+        self.repeatable_comment = function_data[9] if len(function_data) > 9 else None
 
 
 class RizzoSignature(object):
@@ -522,6 +1071,7 @@ class Rizzo(object):
         :type signatures: RizzoSignatures
         """
         rename_count = 0
+        metadata_applied_count = 0
         signature_matches = self._find_match(signatures)
         renamed = []
 
@@ -537,6 +1087,35 @@ class Rizzo(object):
                     renamed.append(new_func.name)
                     if self._rename_functions(function, new_func.name):
                         rename_count += 1
+                    
+                    # Apply enhanced function metadata
+                    metadata_applied = False
+                    
+                    # Apply function signature if available
+                    if new_func.signature:
+                        if apply_function_signature(function, new_func.signature):
+                            metadata_applied = True
+                    
+                    # Apply function variables if available (using robust approach)
+                    if new_func.variables:
+                        if apply_function_variables(function, new_func.variables, self._program):
+                            metadata_applied = True
+                    
+                    # Apply function comments if available (comprehensive)
+                    comments_data = {
+                        'comment': new_func.comment,
+                        'plate_comment': new_func.plate_comment,
+                        'pre_comment': new_func.pre_comment,
+                        'post_comment': new_func.post_comment,
+                        'eol_comment': new_func.eol_comment,
+                        'repeatable_comment': new_func.repeatable_comment
+                    }
+                    if any(comments_data.values()):
+                        if apply_function_comments(function, comments_data, self._program):
+                            metadata_applied = True
+                    
+                    if metadata_applied:
+                        metadata_applied_count += 1
 
                 duplicates = []
                 block_match = {}
@@ -563,7 +1142,8 @@ class Rizzo(object):
                                                           new_function):
                                     rename_count += 1
 
-        print("Renamed {function_count} functions.".format(function_count=rename_count))
+        print("Renamed {function_count} functions and applied metadata to {metadata_count} functions."
+              .format(function_count=rename_count, metadata_count=metadata_applied_count))
 
         return rename_count
 
@@ -802,8 +1382,25 @@ class Rizzo(object):
             immediate = [str(i) for (_, _, i, _) in hashed_function_blocks]
 
             function_entry = address_to_int(function.getEntryPoint())
+            
+            # Extract enhanced function metadata using robust approaches
+            function_signature = extract_function_signature(function)
+            function_variables = extract_function_variables(function, self._program)  
+            function_comments = extract_function_comments(function, self._program)
+            
+            # Store function data with enhanced metadata
             signatures.functions[function_entry] = (
-                function.getName(), hashed_function_blocks)
+                function.getName(),                           # [0] - name
+                hashed_function_blocks,                      # [1] - blocks  
+                function_signature,                          # [2] - signature info
+                function_variables,                          # [3] - variables (comprehensive)
+                function_comments.get('comment'),            # [4] - main comment
+                function_comments.get('plate_comment'),      # [5] - plate comment
+                function_comments.get('pre_comment'),        # [6] - pre comment
+                function_comments.get('post_comment'),       # [7] - post comment
+                function_comments.get('eol_comment'),        # [8] - EOL comment
+                function_comments.get('repeatable_comment')  # [9] - repeatable comment
+            )
 
             signatures.add_formal(formal, function_entry)
             signatures.add_fuzzy(fuzzy, function_entry)
