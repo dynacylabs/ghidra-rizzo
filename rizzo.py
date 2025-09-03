@@ -320,10 +320,21 @@ def extract_function_variables(function, program=None):
         # Extract local variables (basic approach for backward compatibility)
         local_variables = function.getLocalVariables()
         for var in local_variables:
+            # Safely get stack offset - only call if variable has stack storage
+            stack_offset = None
+            try:
+                if hasattr(var, 'getStackOffset') and hasattr(var, 'getVariableStorage'):
+                    var_storage = var.getVariableStorage()
+                    if var_storage and var_storage.hasStackStorage():
+                        stack_offset = var.getStackOffset()
+            except Exception:
+                # If getStackOffset() fails, leave as None
+                pass
+            
             var_data = {
                 'name': var.getName(),
                 'data_type': var.getDataType().getName() if var.getDataType() else None,
-                'stack_offset': var.getStackOffset() if hasattr(var, 'getStackOffset') else None,
+                'stack_offset': stack_offset,
                 'comment': var.getComment(),
                 'length': var.getLength(),
                 'storage': str(var.getVariableStorage()) if hasattr(var, 'getVariableStorage') else None,
