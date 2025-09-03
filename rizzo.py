@@ -811,8 +811,12 @@ def find_signature_matches(new_signature, curr_signature, new_functions,
     signature_match = {}
 
     start = time.time()
-
     key_error_count = 0
+    processed_count = 0
+    total_signatures = len(new_signature)
+    
+    print("  Searching for {signature_type} matches in {total_sigs} signatures...".format(
+        signature_type=signature_type, total_sigs=total_signatures))
 
     for signature, function in new_signature.iteritems():
         if signature in curr_signature:
@@ -830,6 +834,12 @@ def find_signature_matches(new_signature, curr_signature, new_functions,
             
             except:
                 key_error_count += 1
+        
+        processed_count += 1
+        if processed_count % 1000 == 0 or processed_count == total_signatures:
+            print("    Processed {}/{} signatures ({:.1f}%)".format(
+                processed_count, total_signatures,
+                (processed_count * 100.0) / total_signatures if total_signatures > 0 else 0))
 
     end = time.time()
 
@@ -1046,10 +1056,17 @@ class Rizzo(object):
         :param signature_file: Full path to save signatures.
         :type signature_file: str
         """
-        print("Saving signature to {signature_file}...".format(signature_file=signature_file))
+        print("Saving signatures to {signature_file}...".format(signature_file=signature_file))
+        print("  Formal signatures: {}".format(len(self._signatures.formal)))
+        print("  Fuzzy signatures: {}".format(len(self._signatures.fuzzy)))
+        print("  String signatures: {}".format(len(self._signatures.strings)))
+        print("  Function signatures: {}".format(len(self._signatures.functions)))
+        print("  Immediate signatures: {}".format(len(self._signatures.immediates)))
+        print("  Writing to file...")
+        
         with open(signature_file, 'wb') as rizz_file:
             pickle.dump(self._signatures, rizz_file)
-        print("done.")
+        print("Signature file saved successfully.")
 
     def load(self, signature_file):
         """
@@ -1071,7 +1088,15 @@ class Rizzo(object):
             except:
                 print("This does not appear to be a Rizzo signature file.")
                 exit(1)
-        print("done.")
+        
+        # Show what was loaded
+        print("Loaded signatures successfully:")
+        print("  Formal signatures: {}".format(len(signatures.formal)))
+        print("  Fuzzy signatures: {}".format(len(signatures.fuzzy)))
+        print("  String signatures: {}".format(len(signatures.strings)))
+        print("  Function signatures: {}".format(len(signatures.functions)))
+        print("  Immediate signatures: {}".format(len(signatures.immediates)))
+        
         return signatures
 
     def apply(self, signatures):
@@ -1083,10 +1108,23 @@ class Rizzo(object):
         """
         rename_count = 0
         metadata_applied_count = 0
+        
+        print("Finding signature matches...")
         signature_matches = self._find_match(signatures)
         renamed = []
 
-        for matches in signature_matches:
+        # Calculate total matches for progress tracking
+        total_matches = sum(len(matches) for matches in signature_matches)
+        processed_matches = 0
+        
+        print("Applying {} signature matches...".format(total_matches))
+
+        for match_type_idx, matches in enumerate(signature_matches):
+            match_type_names = ['formal', 'string', 'immediate', 'fuzzy']
+            if matches:
+                print("  Processing {} {} matches...".format(
+                    len(matches), match_type_names[match_type_idx]))
+            
             for curr_func, new_func in matches.iteritems():
                 addr_hex = hex(curr_func.address)
                 if addr_hex.endswith('L'):
@@ -1096,6 +1134,10 @@ class Rizzo(object):
                 function = self._flat_api.getFunctionAt(curr_addr)
                 if function and new_func.name not in renamed:
                     renamed.append(new_func.name)
+                    
+                    print("    Applying match: {} -> {}".format(
+                        function.getName(), new_func.name))
+                    
                     if self._rename_functions(function, new_func.name):
                         rename_count += 1
                     
@@ -1104,11 +1146,13 @@ class Rizzo(object):
                     
                     # Apply function signature if available
                     if new_func.signature:
+                        print("      Applying function signature...")
                         if apply_function_signature(function, new_func.signature):
                             metadata_applied = True
                     
                     # Apply function variables if available (using robust approach)
                     if new_func.variables:
+                        print("      Applying function variables...")
                         if apply_function_variables(function, new_func.variables, self._program):
                             metadata_applied = True
                     
@@ -1122,11 +1166,18 @@ class Rizzo(object):
                         'repeatable_comment': new_func.repeatable_comment
                     }
                     if any(comments_data.values()):
+                        print("      Applying function comments...")
                         if apply_function_comments(function, comments_data, self._program):
                             metadata_applied = True
                     
                     if metadata_applied:
                         metadata_applied_count += 1
+
+                processed_matches += 1
+                if processed_matches % 10 == 0 or processed_matches == total_matches:
+                    print("  Progress: {}/{} matches processed ({:.1f}%)".format(
+                        processed_matches, total_matches,
+                        (processed_matches * 100.0) / total_matches if total_matches > 0 else 0))
 
                 duplicates = []
                 block_match = {}
@@ -1372,6 +1423,10 @@ class Rizzo(object):
         signatures = RizzoSignature()
 
         # String based signatures
+        string_count = 0
+        total_strings = len(self._strings)
+        print("Processing {} strings for signature generation...".format(total_strings))
+        
         for (str_hash, curr_string) in self._strings.iteritems():
             # Only create signatures on reasonably long strings with one ref.
             if len(curr_string.value) >= 8 and len(curr_string.xrefs) == 1:
@@ -1381,9 +1436,19 @@ class Rizzo(object):
                     string_hash = self._signature_hash(curr_string.value)
                     entry = address_to_int(function.getEntryPoint())
                     signatures.add_string(string_hash, entry)
+            
+            string_count += 1
+            if string_count % 100 == 0 or string_count == total_strings:
+                print("  Processed {}/{} strings".format(string_count, total_strings))
 
         # Formal, fuzzy, and immediate-based function signatures
-        for function in self._function_manager.getFunctions(True):
+        all_functions = list(self._function_manager.getFunctions(True))
+        total_functions = len(all_functions)
+        function_count = 0
+        
+        print("Processing {} functions for signature generation...".format(total_functions))
+        
+        for function in all_functions:
             hashed_function_blocks = self._hash_function(function)
 
             formal = self._signature_hash(
@@ -1418,7 +1483,14 @@ class Rizzo(object):
 
             for value in immediate:
                 signatures.add_immediate(value, function_entry)
+            
+            function_count += 1
+            if function_count % 50 == 0 or function_count == total_functions:
+                print("  Processed {}/{} functions ({:.1f}%)".format(
+                    function_count, total_functions, 
+                    (function_count * 100.0) / total_functions))
 
+        print("Signature generation complete.")
         signatures.reset_dups()
 
         return signatures
