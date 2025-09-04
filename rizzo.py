@@ -546,14 +546,17 @@ def apply_function_signature(function, signature_data):
                     success = True
                     print("  Applied return type: {}".format(return_type_name))
                 else:
-                    # Try to find the data type using findDataType (more flexible search)
-                    data_types = data_type_manager.findDataTypes(return_type_name, None)
-                    if data_types and len(data_types) > 0:
-                        function.setReturnType(data_types[0], SourceType.USER_DEFINED)
-                        success = True
-                        print("  Applied return type: {} (found via search)".format(return_type_name))
-                    else:
-                        print("  Warning: Could not find return type: {}".format(return_type_name))
+                    # Try to find the data type using findDataTypes (more flexible search)
+                    try:
+                        data_types = data_type_manager.findDataTypes(return_type_name, None)
+                        if data_types and len(data_types) > 0:
+                            function.setReturnType(data_types[0], SourceType.USER_DEFINED)
+                            success = True
+                            print("  Applied return type: {} (found via search)".format(return_type_name))
+                        else:
+                            print("  Warning: Could not find return type: {}".format(return_type_name))
+                    except Exception as find_ex:
+                        print("  Warning: Could not search for return type {}: {}".format(return_type_name, str(find_ex)))
             except Exception as e:
                 print("  Warning: Could not apply return type {}: {}".format(return_type_name, str(e)))
         
@@ -582,10 +585,13 @@ def apply_function_signature(function, signature_data):
                     if param_type_name:
                         param_type = data_type_manager.getDataType(param_type_name)
                         if not param_type:
-                            # Try to find the data type using findDataType (more flexible search)
-                            data_types = data_type_manager.findDataTypes(param_type_name, None)
-                            if data_types and len(data_types) > 0:
-                                param_type = data_types[0]
+                            # Try to find the data type using findDataTypes (more flexible search)
+                            try:
+                                data_types = data_type_manager.findDataTypes(param_type_name, None)
+                                if data_types and len(data_types) > 0:
+                                    param_type = data_types[0]
+                            except Exception:
+                                param_type = None
                         
                         if param_type:
                             param = ParameterImpl(param_name, param_type, function.getProgram())
@@ -649,10 +655,13 @@ def apply_function_variables(function, variables_data, program=None):
                     if param_type_name:
                         param_type = data_type_manager.getDataType(param_type_name)
                         if not param_type:
-                            # Try to find the data type using findDataType (more flexible search)
-                            data_types = data_type_manager.findDataTypes(param_type_name, None)
-                            if data_types and len(data_types) > 0:
-                                param_type = data_types[0]
+                            # Try to find the data type using findDataTypes (more flexible search)
+                            try:
+                                data_types = data_type_manager.findDataTypes(param_type_name, None)
+                                if data_types and len(data_types) > 0:
+                                    param_type = data_types[0]
+                            except Exception:
+                                param_type = None
                         
                         if param_type:
                             param = ParameterImpl(param_name, param_type, function.getProgram())
@@ -742,10 +751,13 @@ def apply_function_variables(function, variables_data, program=None):
                     if var_name and var_type_name:
                         var_type = data_type_manager.getDataType(var_type_name)
                         if not var_type:
-                            # Try to find the data type using findDataType (more flexible search)
-                            data_types = data_type_manager.findDataTypes(var_type_name, None)
-                            if data_types and len(data_types) > 0:
-                                var_type = data_types[0]
+                            # Try to find the data type using findDataTypes (more flexible search)
+                            try:
+                                data_types = data_type_manager.findDataTypes(var_type_name, None)
+                                if data_types and len(data_types) > 0:
+                                    var_type = data_types[0]
+                            except Exception:
+                                var_type = None
                         
                         if var_type and stack_offset is not None:
                             try:
