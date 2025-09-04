@@ -7,14 +7,10 @@ from ghidra.program.model.block import BasicBlockModel
 from ghidra.program.model.symbol import SourceType
 from ghidra.program.flatapi import FlatProgramAPI
 from ghidra.program.model.symbol import RefType
-<<<<<<< HEAD
 from ghidra.program.model.data import DataTypeManager
 from ghidra.program.model.listing import ParameterImpl, LocalVariableImpl, Function, CodeUnit
 from ghidra.program.model.pcode import HighFunctionDBUtil
 from ghidra.app.decompiler import DecompInterface
-=======
-from ghidra.program.model.listing import CodeUnit
->>>>>>> 07c8709100a5b3eb47fcb636b85f77e844d14462
 
 
 def get_instruction_list(code_manager, function):
