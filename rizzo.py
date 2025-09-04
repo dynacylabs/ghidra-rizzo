@@ -545,6 +545,15 @@ def apply_function_signature(function, signature_data):
                     function.setReturnType(return_type, SourceType.USER_DEFINED)
                     success = True
                     print("  Applied return type: {}".format(return_type_name))
+                else:
+                    # Try to find the data type using findDataType (more flexible search)
+                    data_types = data_type_manager.findDataTypes(return_type_name, None)
+                    if data_types and len(data_types) > 0:
+                        function.setReturnType(data_types[0], SourceType.USER_DEFINED)
+                        success = True
+                        print("  Applied return type: {} (found via search)".format(return_type_name))
+                    else:
+                        print("  Warning: Could not find return type: {}".format(return_type_name))
             except Exception as e:
                 print("  Warning: Could not apply return type {}: {}".format(return_type_name, str(e)))
         
@@ -572,11 +581,19 @@ def apply_function_signature(function, signature_data):
                     
                     if param_type_name:
                         param_type = data_type_manager.getDataType(param_type_name)
+                        if not param_type:
+                            # Try to find the data type using findDataType (more flexible search)
+                            data_types = data_type_manager.findDataTypes(param_type_name, None)
+                            if data_types and len(data_types) > 0:
+                                param_type = data_types[0]
+                        
                         if param_type:
                             param = ParameterImpl(param_name, param_type, function.getProgram())
                             if param_comment:
                                 param.setComment(param_comment)
                             new_params.append(param)
+                        else:
+                            print("  Warning: Could not find parameter type: {}".format(param_type_name))
                 
                 if new_params:
                     function.replaceParameters(new_params, 
@@ -631,11 +648,19 @@ def apply_function_variables(function, variables_data, program=None):
                     
                     if param_type_name:
                         param_type = data_type_manager.getDataType(param_type_name)
+                        if not param_type:
+                            # Try to find the data type using findDataType (more flexible search)
+                            data_types = data_type_manager.findDataTypes(param_type_name, None)
+                            if data_types and len(data_types) > 0:
+                                param_type = data_types[0]
+                        
                         if param_type:
                             param = ParameterImpl(param_name, param_type, function.getProgram())
                             if param_comment:
                                 param.setComment(param_comment)
                             new_params.append(param)
+                        else:
+                            print("  Warning: Could not find parameter type: {}".format(param_type_name))
                 
                 if new_params:
                     function.replaceParameters(new_params, 
@@ -716,6 +741,12 @@ def apply_function_variables(function, variables_data, program=None):
                     
                     if var_name and var_type_name:
                         var_type = data_type_manager.getDataType(var_type_name)
+                        if not var_type:
+                            # Try to find the data type using findDataType (more flexible search)
+                            data_types = data_type_manager.findDataTypes(var_type_name, None)
+                            if data_types and len(data_types) > 0:
+                                var_type = data_types[0]
+                        
                         if var_type and stack_offset is not None:
                             try:
                                 # Create local variable (basic approach for compatibility)
@@ -730,6 +761,9 @@ def apply_function_variables(function, variables_data, program=None):
                                     
                             except Exception as var_e:
                                 print("  Warning: Could not create variable {}: {}".format(var_name, str(var_e)))
+                        else:
+                            if not var_type:
+                                print("  Warning: Could not find variable type: {}".format(var_type_name))
                 
             except Exception as e:
                 print("  Warning: Could not apply local variables: {}".format(str(e)))
@@ -738,43 +772,6 @@ def apply_function_variables(function, variables_data, program=None):
         
     except Exception as e:
         print("Warning: Could not apply variables to function {}: {}".format(
-            function.getName() if function else "Unknown", str(e)))
-        return False
-
-
-def apply_function_comments(function, comments_data):
-    """
-    Apply comments to a function.
-    
-    :param function: Function to apply comments to.
-    :type function: ghidra.program.model.listing.Function
-    
-    :param comments_data: Comments data to apply.
-    :type comments_data: dict
-    
-    :returns: True if successful, False otherwise.
-    :rtype: bool
-    """
-    if not function or not comments_data:
-        return False
-        
-    try:
-        if comments_data.get('comment'):
-            function.setComment(comments_data['comment'])
-            
-        if comments_data.get('plate_comment'):
-            function.setPlateComment(comments_data['plate_comment'])
-            
-        if comments_data.get('pre_comment'):
-            function.setPreComment(comments_data['pre_comment'])
-            
-        if comments_data.get('post_comment'):
-            function.setPostComment(comments_data['post_comment'])
-        
-        return True
-        
-    except Exception as e:
-        print("Warning: Could not apply comments to function {}: {}".format(
             function.getName() if function else "Unknown", str(e)))
         return False
 
@@ -818,7 +815,7 @@ def find_signature_matches(new_signature, curr_signature, new_functions,
     print("  Searching for {signature_type} matches in {total_sigs} signatures...".format(
         signature_type=signature_type, total_sigs=total_signatures))
 
-    for signature, function in new_signature.iteritems():
+    for signature, function in new_signature.items():
         if signature in curr_signature:
             new_func = None
             curr_func = RizzoFunctionDescriptor(curr_signature,
@@ -935,7 +932,7 @@ class RizzoSignature(object):
         :parrm value: Value to set for key.
         :type: value: variable
         """
-        if dictionary.has_key(key):
+        if key in dictionary:
             del dictionary[key]
             dictionary_dups.add(key)
         elif key not in dictionary_dups:
@@ -1125,23 +1122,26 @@ class Rizzo(object):
                 print("  Processing {} {} matches...".format(
                     len(matches), match_type_names[match_type_idx]))
             
-            for curr_func, new_func in matches.iteritems():
+            for curr_func, new_func in matches.items():
                 addr_hex = hex(curr_func.address)
                 if addr_hex.endswith('L'):
                     addr_hex = addr_hex[:-1]
                 curr_addr = self._address_factory.getAddress(addr_hex)
 
                 function = self._flat_api.getFunctionAt(curr_addr)
-                if function and new_func.name not in renamed:
-                    renamed.append(new_func.name)
-                    
-                    print("    Applying match: {} -> {}".format(
+                if function:
+                    print("    Processing match: {} -> {}".format(
                         function.getName(), new_func.name))
                     
-                    if self._rename_functions(function, new_func.name):
-                        rename_count += 1
+                    # Try to rename function if applicable
+                    renamed_function = False
+                    if new_func.name not in renamed:
+                        if self._rename_functions(function, new_func.name):
+                            renamed.append(new_func.name)
+                            rename_count += 1
+                            renamed_function = True
                     
-                    # Apply enhanced function metadata
+                    # Apply enhanced function metadata regardless of renaming status
                     metadata_applied = False
                     
                     # Apply function signature if available
@@ -1172,6 +1172,9 @@ class Rizzo(object):
                     
                     if metadata_applied:
                         metadata_applied_count += 1
+                        print("      Successfully applied metadata to function")
+                    elif not renamed_function:
+                        print("      No metadata available for function {}".format(function.getName()))
 
                 processed_matches += 1
                 if processed_matches % 10 == 0 or processed_matches == total_matches:
@@ -1193,7 +1196,7 @@ class Rizzo(object):
                             elif curr_block not in duplicates:
                                 block_match[curr_block] = new_block
 
-                for curr_block, new_block in block_match.iteritems():
+                for curr_block, new_block in block_match.items():
                     for curr_function, new_function in \
                             zip(curr_block.functions, new_block.functions):
                         functions = find_function(self._program, curr_function)
@@ -1365,7 +1368,7 @@ class Rizzo(object):
                 for dref in data_ref:
                     addr_hash = dref.toAddress.hashCode()
 
-                    if self._strings.has_key(addr_hash):
+                    if addr_hash in self._strings:
                         string_value = self._strings[addr_hash].value
                     else:
                         string_value = 'dataref'
@@ -1427,7 +1430,7 @@ class Rizzo(object):
         total_strings = len(self._strings)
         print("Processing {} strings for signature generation...".format(total_strings))
         
-        for (str_hash, curr_string) in self._strings.iteritems():
+        for (str_hash, curr_string) in self._strings.items():
             # Only create signatures on reasonably long strings with one ref.
             if len(curr_string.value) >= 8 and len(curr_string.xrefs) == 1:
                 function = self._flat_api.getFunctionContaining(
@@ -1463,6 +1466,19 @@ class Rizzo(object):
             function_signature = extract_function_signature(function)
             function_variables = extract_function_variables(function, self._program)  
             function_comments = extract_function_comments(function, self._program)
+            
+            # Debug output for metadata extraction (can be commented out for production)
+            if function_signature or function_variables or any(function_comments.values()):
+                metadata_types = []
+                if function_signature:
+                    metadata_types.append("signature")
+                if function_variables:
+                    metadata_types.append("variables")
+                if any(function_comments.values()):
+                    metadata_types.append("comments")
+                if function_count < 5:  # Only show first few for debugging
+                    print("    Found metadata for {}: {}".format(
+                        function.getName(), ", ".join(metadata_types)))
             
             # Store function data with enhanced metadata
             signatures.functions[function_entry] = (
