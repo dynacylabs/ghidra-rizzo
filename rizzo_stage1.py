@@ -51,6 +51,34 @@ def save_enhanced_signatures():
     function_manager = currentProgram.getFunctionManager()
     high_func_db_util = HighFunctionDBUtil()
     
+    # Test decompiler on first 3 functions to understand what's happening
+    print("Testing decompiler on first few functions...")
+    test_count = 0
+    for test_function in function_manager.getFunctions(True):
+        if test_count >= 3:
+            break
+        test_count += 1
+        
+        print(f"\nTesting function: {test_function.getName()}")
+        test_results = decompiler.decompileFunction(test_function, 60, None)
+        
+        if not test_results:
+            print("  - decompileFunction returned None")
+        elif not test_results.decompileCompleted():
+            error_msg = test_results.getErrorMessage()
+            print(f"  - Decompilation not completed: {error_msg}")
+        else:
+            print("  - Decompilation completed successfully")
+            high_func = test_results.getHighFunction()
+            if high_func:
+                local_symbols = high_func.getLocalSymbolMap().getSymbols()
+                non_param_symbols = [s for s in local_symbols if not s.isParameter()]
+                print(f"  - Found {len(non_param_symbols)} local variables")
+            else:
+                print("  - No high function available")
+    
+    print("\nStarting full processing...\n")
+    
     matched_functions = 0
     new_functions = 0
     variable_extraction_success = 0
@@ -146,28 +174,52 @@ def get_enhanced_function_variables(function, decompiler, high_func_db_util):
     try:
         # Get high-level function representation (using 60 second timeout - compromise between 30 and 120)
         decompiler_results = decompiler.decompileFunction(function, 60, None)
-        if decompiler_results and decompiler_results.decompileCompleted():
+        
+        # Detailed debugging to understand what's happening
+        if not decompiler_results:
+            print(f"Debug: decompileFunction returned None for {function.getName()}")
+        elif not decompiler_results.decompileCompleted():
+            error_msg = decompiler_results.getErrorMessage()
+            print(f"Debug: Decompilation not completed for {function.getName()}: {error_msg}")
+        else:
             high_func = decompiler_results.getHighFunction()
-            if high_func:
-                local_symbols = high_func.getLocalSymbolMap().getSymbols()
-                for symbol in local_symbols:
-                    # Skip parameters since they're handled separately
-                    if symbol.isParameter():
-                        continue
+            if not high_func:
+                print(f"Debug: No high function available for {function.getName()}")
+            else:
+                local_symbol_map = high_func.getLocalSymbolMap()
+                if not local_symbol_map:
+                    print(f"Debug: No local symbol map for {function.getName()}")
+                else:
+                    local_symbols = local_symbol_map.getSymbols()
+                    if not local_symbols:
+                        print(f"Debug: No local symbols for {function.getName()}")
+                    else:
+                        non_param_count = 0
+                        for symbol in local_symbols:
+                            # Skip parameters since they're handled separately
+                            if symbol.isParameter():
+                                continue
+                            non_param_count += 1
+                            variables.append({
+                                'name': symbol.getName(),
+                                'type': str(symbol.getDataType()),
+                                'category': 'local',
+                                'is_parameter': symbol.isParameter(),
+                                'storage': str(symbol.getStorage()) if hasattr(symbol, 'getStorage') else ""
+                            })
                         
-                    variables.append({
-                        'name': symbol.getName(),
-                        'type': str(symbol.getDataType()),
-                        'category': 'local',
-                        'is_parameter': symbol.isParameter(),
-                        'storage': str(symbol.getStorage()) if hasattr(symbol, 'getStorage') else ""
-                    })
+                        if non_param_count == 0:
+                            print(f"Debug: All symbols were parameters for {function.getName()}")
+                        else:
+                            # Success - return the variables without further warning
+                            return variables
                     
-        # Fallback: if high-level decompilation fails, try basic variable extraction
+        # Only show fallback warning if we actually have an issue
         if not variables:
             print(f"Warning: High-level decompilation failed for {function.getName()}, using basic variable extraction")
             try:
-                for var in function.getLocalVariables():
+                local_vars = function.getLocalVariables()
+                for var in local_vars:
                     variables.append({
                         'name': var.getName(),
                         'type': str(var.getDataType()),
@@ -179,7 +231,7 @@ def get_enhanced_function_variables(function, decompiler, high_func_db_util):
                 print(f"Warning: Could not extract variables for {function.getName()}: {e}")
                 
     except Exception as e:
-        print(f"Warning: Could not extract high-level variables for {function.getName()}: {e}")
+        print(f"Warning: Exception during decompilation for {function.getName()}: {e}")
         
         # Final fallback to basic variable extraction
         try:
