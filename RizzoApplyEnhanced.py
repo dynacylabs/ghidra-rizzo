@@ -240,6 +240,7 @@ def apply_function_variables(function, var_info_list, decompiler, high_func_db_u
         
         # Strategy 1: Try to match by storage location (most reliable)
         matched_by_storage = set()
+        matched_enhanced_storage = set()
         for current in current_symbols:
             if current['symbol'] in matched_by_storage:
                 continue
@@ -247,50 +248,55 @@ def apply_function_variables(function, var_info_list, decompiler, high_func_db_u
             current_storage = current['storage']
             if current_storage and current_storage != "":
                 for enhanced in enhanced_vars:
-                    if enhanced.get('storage') == current_storage and enhanced not in matched_by_storage:
+                    enhanced_storage = enhanced.get('storage', '')
+                    if enhanced_storage == current_storage and enhanced_storage not in matched_enhanced_storage:
                         success = apply_variable_update(current['symbol'], enhanced, high_func, high_func_db_util, function)
                         if success:
                             matched_by_storage.add(current['symbol'])
-                            matched_by_storage.add(enhanced)
+                            matched_enhanced_storage.add(enhanced_storage)
                             print(f"    Storage match: {current['name']} -> {enhanced['name']}")
                         break
         
         # Strategy 2: Try to match by name (for variables that weren't renamed)
         matched_by_name = set()
+        matched_enhanced_name = set()
         for current in current_symbols:
             if current['symbol'] in matched_by_storage:
                 continue
                 
             current_name = current['name']
             for enhanced in enhanced_vars:
-                if enhanced not in matched_by_storage and enhanced['name'] == current_name:
+                enhanced_name = enhanced['name']
+                if enhanced_name == current_name and enhanced_name not in matched_enhanced_name:
                     success = apply_variable_update(current['symbol'], enhanced, high_func, high_func_db_util, function)
                     if success:
                         matched_by_name.add(current['symbol'])
-                        matched_by_name.add(enhanced)
+                        matched_enhanced_name.add(enhanced_name)
                         print(f"    Name match: {current['name']} -> {enhanced['name']}")
                     break
         
         # Strategy 3: Try to match by type (for similar variables)
         matched_by_type = set()
+        matched_enhanced_type = set()
         for current in current_symbols:
             if current['symbol'] in matched_by_storage or current['symbol'] in matched_by_name:
                 continue
                 
             current_type = current['type']
             for enhanced in enhanced_vars:
-                if (enhanced not in matched_by_storage and enhanced not in matched_by_name and
-                    enhanced['type'] == current_type):
+                enhanced_type = enhanced['type']
+                enhanced_key = f"{enhanced_type}_{enhanced['name']}"  # Use unique key for tracking
+                if enhanced_type == current_type and enhanced_key not in matched_enhanced_type:
                     success = apply_variable_update(current['symbol'], enhanced, high_func, high_func_db_util, function)
                     if success:
                         matched_by_type.add(current['symbol'])
-                        matched_by_type.add(enhanced)
+                        matched_enhanced_type.add(enhanced_key)
                         print(f"    Type match: {current['name']} -> {enhanced['name']}")
                     break
         
         # Strategy 4: Match remaining variables by position (order)
         remaining_current = [c for c in current_symbols if c['symbol'] not in matched_by_storage and c['symbol'] not in matched_by_name and c['symbol'] not in matched_by_type]
-        remaining_enhanced = [e for e in enhanced_vars if e not in matched_by_storage and e not in matched_by_name and e not in matched_by_type]
+        remaining_enhanced = [e for e in enhanced_vars if e.get('storage', '') not in matched_enhanced_storage and e['name'] not in matched_enhanced_name and f"{e['type']}_{e['name']}" not in matched_enhanced_type]
         
         for i, current in enumerate(remaining_current):
             if i < len(remaining_enhanced):
@@ -335,16 +341,23 @@ def apply_variable_update(symbol, enhanced_var, high_func, high_func_db_util, fu
         elif type_needs_update:
             print(f"    Retyping variable: {old_name} ({old_type}) -> ({new_type})")
         
-        # Try multiple approaches to update the variable
+        # For HighSymbol, we need to use updateDBVariable method differently
+        # The key insight is that we need to pass BOTH the name and type, 
+        # even if only one is changing
         success = False
         
-        # Method 1: Use updateDBVariable (preferred method)
         try:
+            # Always pass the new name (even if it's the same) and new data type
             high_func_db_util.updateDBVariable(
                 symbol, new_name, data_type, SourceType.USER_DEFINED
             )
             
             # Commit the changes to make them persistent
+            # Use COMMIT_LOCALS option specifically for local variables
+            high_func_db_util.commitLocalNamesToDatabase(
+                high_func, SourceType.USER_DEFINED
+            )
+            
             high_func_db_util.commitParamsToDatabase(
                 high_func,
                 True,
@@ -361,41 +374,22 @@ def apply_variable_update(symbol, enhanced_var, high_func, high_func_db_util, fu
             
             if name_updated and type_updated:
                 success = True
-                print(f"    Successfully updated using updateDBVariable: {updated_name} : {updated_type}")
+                print(f"    ✓ Successfully updated: {updated_name} : {updated_type}")
             else:
-                print(f"    updateDBVariable partial success - Name: {updated_name} (wanted {new_name}), Type: {updated_type} (wanted {new_type})")
-                success = name_updated or type_updated  # Partial success is still success
+                print(f"    ⚠ Partial success - Name: '{updated_name}' (wanted '{new_name}'), Type: '{updated_type}' (wanted '{new_type}')")
+                # If type updated but name didn't, that's still partial success
+                if type_updated and not name_updated:
+                    print(f"    → Type update successful, but name update failed (this is a known Ghidra limitation)")
+                success = type_updated  # Consider it successful if at least type worked
             
-        except Exception as e1:
-            print(f"    Method 1 (updateDBVariable) failed: {e1}")
-            
-            # Method 2: Try updating symbol name directly if it has setName method
-            try:
-                if hasattr(symbol, 'setName') and name_needs_update:
-                    symbol.setName(new_name, SourceType.USER_DEFINED)
-                    print(f"    Successfully renamed using setName")
-                    success = True
-            except Exception as e2:
-                print(f"    Method 2 (setName) failed: {e2}")
-                
-            # Method 3: Try updating via the variable if accessible
-            try:
-                if hasattr(symbol, 'getVariable'):
-                    variable = symbol.getVariable()
-                    if variable:
-                        if name_needs_update and hasattr(variable, 'setName'):
-                            variable.setName(new_name, SourceType.USER_DEFINED)
-                        if type_needs_update and hasattr(variable, 'setDataType'):
-                            variable.setDataType(data_type, SourceType.USER_DEFINED)
-                        print(f"    Successfully updated using variable methods")
-                        success = True
-            except Exception as e3:
-                print(f"    Method 3 (variable methods) failed: {e3}")
+        except Exception as e:
+            print(f"    ✗ updateDBVariable failed: {e}")
+            success = False
         
         return success
         
     except Exception as e:
-        print(f"    Failed to update variable {symbol.getName()}: {e}")
+        print(f"    ✗ Failed to update variable {symbol.getName()}: {e}")
         import traceback
         traceback.print_exc()
         return False

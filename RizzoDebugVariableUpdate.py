@@ -88,13 +88,19 @@ def debug_variable_update():
         print(f"TESTING UPDATE: {old_name} -> {new_name}")
         print("-" * 40)
         
-        # Method 1: updateDBVariable
-        print("Method 1: updateDBVariable")
+        # Method 1: updateDBVariable with commitLocalNamesToDatabase
+        print("Method 1: updateDBVariable + commitLocalNamesToDatabase")
         try:
             high_func_db_util.updateDBVariable(
                 test_symbol, new_name, test_symbol.getDataType(), SourceType.USER_DEFINED
             )
             
+            # Try the local names commit method
+            high_func_db_util.commitLocalNamesToDatabase(
+                high_func, SourceType.USER_DEFINED
+            )
+            
+            # Also try the params commit method
             high_func_db_util.commitParamsToDatabase(
                 high_func,
                 True,
