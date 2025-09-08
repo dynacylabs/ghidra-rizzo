@@ -7,7 +7,7 @@
 
 import pickle
 import time
-from ghidra.app.decompiler import DecompInterface
+from ghidra.app.decompiler import DecompInterface, DecompileOptions
 from ghidra.program.model.pcode import HighFunctionDBUtil
 
 def save_enhanced_signatures():
@@ -46,7 +46,29 @@ def save_enhanced_signatures():
     
     # Set up decompiler for getting enhanced information
     decompiler = DecompInterface()
-    decompiler.openProgram(currentProgram)
+    
+    # Configure decompiler options for better reliability
+    options = DecompileOptions()
+    decompiler.setOptions(options)
+    decompiler.toggleSyntaxTree(True)
+    decompiler.toggleCCode(True)
+    decompiler.setSimplificationStyle("decompile")
+    
+    if not decompiler.openProgram(currentProgram):
+        print("Failed to open program with decompiler!")
+        return
+    
+    # Test the decompiler on the first function to verify it's working
+    first_function = function_manager.getFunctions(True).next() if function_manager.getFunctionCount() > 0 else None
+    if first_function:
+        print(f"Testing decompiler on function: {first_function.getName()}")
+        test_results = decompiler.decompileFunction(first_function, 60, None)
+        if test_results and test_results.decompileCompleted():
+            print("Decompiler test successful!")
+        else:
+            print(f"Decompiler test failed: {test_results.getErrorMessage() if test_results else 'No results returned'}")
+    else:
+        print("No functions found to test decompiler")
     
     function_manager = currentProgram.getFunctionManager()
     high_func_db_util = HighFunctionDBUtil()
@@ -63,6 +85,20 @@ def save_enhanced_signatures():
         current_function += 1
         if current_function % 50 == 0:
             print(f"Processing function {current_function}/{total_functions}: {function.getName()}")
+            
+        # Periodically reset the decompiler to prevent resource issues
+        if current_function % 500 == 0:
+            print("Resetting decompiler interface...")
+            decompiler.dispose()
+            decompiler = DecompInterface()
+            options = DecompileOptions()
+            decompiler.setOptions(options)
+            decompiler.toggleSyntaxTree(True)
+            decompiler.toggleCCode(True)
+            decompiler.setSimplificationStyle("decompile")
+            if not decompiler.openProgram(currentProgram):
+                print("Failed to reopen program with decompiler!")
+                return
             
         address = int(function.getEntryPoint().toString(), 16)
         
@@ -144,39 +180,62 @@ def get_enhanced_function_variables(function, decompiler, high_func_db_util):
     variables = []
     
     try:
-        # Get high-level function representation
-        decompiler_results = decompiler.decompileFunction(function, 30, None)
-        if decompiler_results and decompiler_results.decompileCompleted():
+        # Get high-level function representation with more robust error handling
+        decompiler_results = decompiler.decompileFunction(function, 60, None)  # Increased timeout
+        
+        if not decompiler_results:
+            print(f"Warning: Decompiler returned null results for {function.getName()}")
+        elif not decompiler_results.decompileCompleted():
+            print(f"Warning: Decompilation did not complete for {function.getName()}: {decompiler_results.getErrorMessage()}")
+        else:
             high_func = decompiler_results.getHighFunction()
             if high_func:
-                local_symbols = high_func.getLocalSymbolMap().getSymbols()
-                for symbol in local_symbols:
-                    # Skip parameters since they're handled separately
-                    if symbol.isParameter():
-                        continue
-                        
-                    variables.append({
-                        'name': symbol.getName(),
-                        'type': str(symbol.getDataType()),
-                        'category': 'local',
-                        'is_parameter': symbol.isParameter(),
-                        'storage': str(symbol.getStorage()) if hasattr(symbol, 'getStorage') else "",
-                        'high_symbol_id': symbol.getId() if hasattr(symbol, 'getId') else None
-                    })
+                try:
+                    local_symbol_map = high_func.getLocalSymbolMap()
+                    if local_symbol_map:
+                        local_symbols = local_symbol_map.getSymbols()
+                        for symbol in local_symbols:
+                            # Skip parameters since they're handled separately
+                            if symbol.isParameter():
+                                continue
+                                
+                            try:
+                                variables.append({
+                                    'name': symbol.getName(),
+                                    'type': str(symbol.getDataType()),
+                                    'category': 'local',
+                                    'is_parameter': symbol.isParameter(),
+                                    'storage': str(symbol.getStorage()) if hasattr(symbol, 'getStorage') else "",
+                                    'high_symbol_id': symbol.getId() if hasattr(symbol, 'getId') else None
+                                })
+                            except Exception as symbol_error:
+                                print(f"Warning: Error processing symbol in {function.getName()}: {symbol_error}")
+                                continue
+                    else:
+                        print(f"Warning: No local symbol map for {function.getName()}")
+                except Exception as symbol_map_error:
+                    print(f"Warning: Error accessing symbol map for {function.getName()}: {symbol_map_error}")
+            else:
+                print(f"Warning: No high function available for {function.getName()}")
                     
         # Fallback: if high-level decompilation fails, try basic variable extraction
         if not variables:
             print(f"Warning: High-level decompilation failed for {function.getName()}, using basic variable extraction")
             try:
-                for var in function.getLocalVariables():
-                    variables.append({
-                        'name': var.getName(),
-                        'type': str(var.getDataType()),
-                        'category': 'local',
-                        'is_parameter': False,
-                        'storage': str(var.getVariableStorage()) if hasattr(var, 'getVariableStorage') else "",
-                        'high_symbol_id': None
-                    })
+                local_vars = function.getLocalVariables()
+                for var in local_vars:
+                    try:
+                        variables.append({
+                            'name': var.getName(),
+                            'type': str(var.getDataType()),
+                            'category': 'local',
+                            'is_parameter': False,
+                            'storage': str(var.getVariableStorage()) if hasattr(var, 'getVariableStorage') else "",
+                            'high_symbol_id': None
+                        })
+                    except Exception as var_error:
+                        print(f"Warning: Error processing local variable in {function.getName()}: {var_error}")
+                        continue
             except Exception as e:
                 print(f"Warning: Could not extract basic variables for {function.getName()}: {e}")
                 
@@ -185,15 +244,19 @@ def get_enhanced_function_variables(function, decompiler, high_func_db_util):
         
         # Final fallback to basic variable extraction
         try:
-            for var in function.getLocalVariables():
-                variables.append({
-                    'name': var.getName(),
-                    'type': str(var.getDataType()),
-                    'category': 'local',
-                    'is_parameter': False,
-                    'storage': "",
-                    'high_symbol_id': None
-                })
+            local_vars = function.getLocalVariables()
+            for var in local_vars:
+                try:
+                    variables.append({
+                        'name': var.getName(),
+                        'type': str(var.getDataType()),
+                        'category': 'local',
+                        'is_parameter': False,
+                        'storage': "",
+                        'high_symbol_id': None
+                    })
+                except:
+                    continue
         except:
             pass
     
@@ -202,9 +265,21 @@ def get_enhanced_function_variables(function, decompiler, high_func_db_util):
 def get_decompiled_code(function, decompiler):
     """Get decompiled C code for the function."""
     try:
-        decompiler_results = decompiler.decompileFunction(function, 30, None)
-        if decompiler_results and decompiler_results.decompileCompleted():
-            return decompiler_results.getDecompiledFunction().getC()
+        decompiler_results = decompiler.decompileFunction(function, 60, None)  # Increased timeout
+        
+        if not decompiler_results:
+            print(f"Warning: Decompiler returned null results for decompiled code in {function.getName()}")
+            return ""
+        elif not decompiler_results.decompileCompleted():
+            print(f"Warning: Decompilation did not complete for decompiled code in {function.getName()}: {decompiler_results.getErrorMessage()}")
+            return ""
+        else:
+            decompiled_func = decompiler_results.getDecompiledFunction()
+            if decompiled_func:
+                return decompiled_func.getC()
+            else:
+                print(f"Warning: No decompiled function available for {function.getName()}")
+                return ""
     except Exception as e:
         print(f"Could not decompile {function.getName()}: {e}")
     
