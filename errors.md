@@ -1,58 +1,51 @@
-Warning: High-level decompilation failed for save_iono_data_and_process_parameters, using basic variable extraction
-Warning: High-level decompilation failed for process_data_wrapper, using basic variable extraction
-Warning: High-level decompilation failed for set_periph16_0x8_value, using basic variable extraction
-Warning: High-level decompilation failed for copy_periph82_to_periph16, using basic variable extraction
-Warning: High-level decompilation failed for set_or_get_periph16_value, using basic variable extraction
-Warning: High-level decompilation failed for write_to_peripheral16_register, using basic variable extraction
-Warning: High-level decompilation failed for read_peripheral16_register, using basic variable extraction
-Warning: High-level decompilation failed for read_peripheral_register, using basic variable extraction
-Warning: High-level decompilation failed for write_to_periph16_0x24, using basic variable extraction
-Warning: High-level decompilation failed for get_periph16_value, using basic variable extraction
-Warning: High-level decompilation failed for readPeripheralValue, using basic variable extraction
-Processing function 1200/4061: set_peripheral_register_bit_and_value
-Warning: High-level decompilation failed for get_peripheral16_value, using basic variable extraction
-Warning: High-level decompilation failed for is_peripheral_bit_set, using basic variable extraction
-Warning: High-level decompilation failed for read_peripheral5_status, using basic variable extraction
-Warning: High-level decompilation failed for update_and_wrap_counter_wrapper, using basic variable extraction
+Debug: All symbols were parameters for configure_peripheral_settings
+Warning: High-level decompilation failed for configure_peripheral_settings, using basic variable extraction
+Debug: All symbols were parameters for enable_peripheral_bit_0
+Warning: High-level decompilation failed for enable_peripheral_bit_0, using basic variable extraction
+Debug: All symbols were parameters for disable_peripheral_interrupt
+Warning: High-level decompilation failed for disable_peripheral_interrupt, using basic variable extraction
+Debug: All symbols were parameters for read_short_from_peripheral
+Warning: High-level decompilation failed for read_short_from_peripheral, using basic variable extraction
+Debug: All symbols were parameters for set_peripheral9_value_based_on_input
+Warning: High-level decompilation failed for set_peripheral9_value_based_on_input, using basic variable extraction
+Debug: All symbols were parameters for read_peripheral9_register
+Warning: High-level decompilation failed for read_peripheral9_register, using basic variable extraction
+Debug: All symbols were parameters for set_peripheral9_value
+Warning: High-level decompilation failed for set_peripheral9_value, using basic variable extraction
+Debug: All symbols were parameters for get_peripheral_9_value
+Warning: High-level decompilation failed for get_peripheral_9_value, using basic variable extraction
+Debug: All symbols were parameters for call_fun_00011c14
+Warning: High-level decompilation failed for call_fun_00011c14, using basic variable extraction
+Debug: All symbols were parameters for call_fun_00011c5e
+Warning: High-level decompilation failed for call_fun_00011c5e, using basic variable extraction
+Debug: All symbols were parameters for call_function_11d68
+Warning: High-level decompilation failed for call_function_11d68, using basic variable extraction
+Debug: All symbols were parameters for initialize_peripheral_settings
+Warning: High-level decompilation failed for initialize_peripheral_settings, using basic variable extraction
+Debug: All symbols were parameters for call_function_11c0e
+Warning: High-level decompilation failed for call_function_11c0e, using basic variable extraction
+Debug: All symbols were parameters for send_data_with_retry
+Warning: High-level decompilation failed for send_data_with_retry, using basic variable extraction
+Debug: All symbols were parameters for reset_peripheral_and_return_param
+Warning: High-level decompilation failed for reset_peripheral_and_return_param, using basic variable extraction
+Debug: All symbols were parameters for reset_peripheral_register
 Warning: High-level decompilation failed for reset_peripheral_register, using basic variable extraction
-Warning: High-level decompilation failed for clearPeripheralState, using basic variable extraction
-Warning: High-level decompilation failed for update_peripheral9_and_process_data, using basic variable extraction
-Warning: High-level decompilation failed for configure_peripheral_17, using basic variable extraction
-Warning: High-level decompilation failed for disable_peripheral_17, using basic variable extraction
-Warning: High-level decompilation failed for read_periph17_0x88_offset_0x40, using basic variable extraction
-Warning: High-level decompilation failed for getPeriph17PointerIfAvailable, using basic variable extraction
-Processing function 1250/4061: process_periph17_data
-Warning: High-level decompilation failed for get_peripheral_value, using basic variable extraction
-Warning: High-level decompilation failed for read_periph18_0x58, using basic variable extraction
-Warning: High-level decompilation failed for call_FUN_00070bf6, using basic variable extraction
-Warning: High-level decompilation failed for reset_peripheral_register, using basic variable extraction
-Warning: High-level decompilation failed for set_peripheral_bit, using basic variable extraction
-Warning: High-level decompilation failed for get_peripheral_19_ptr, using basic variable extraction
-Warning: High-level decompilation failed for configure_peripheral19, using basic variable extraction
-Warning: High-level decompilation failed for get_peripheral19_pointer, using basic variable extraction
-Warning: High-level decompilation failed for get_global_data_30e70, using basic variable extraction
-Warning: High-level decompilation failed for get_global_dat_00030e8c, using basic variable extraction
-Warning: High-level decompilation failed for get_peripheral22_address, using basic variable extraction
-Warning: High-level decompilation failed for configure_peripheral22, using basic variable extraction
-Warning: High-level decompilation failed for perform_operation_with_offset, using basic variable extraction
-Warning: High-level decompilation failed for get_peripheral19_address, using basic variable extraction
-Warning: High-level decompilation failed for read_periph18_offset_0x7c, using basic variable extraction
-Warning: High-level decompilation failed for get_peripheral19_pointer, using basic variable extraction
-Warning: High-level decompilation failed for configure_peripheral19, using basic variable extraction
-Warning: High-level decompilation failed for invoke_thunk_with_fixed_arguments, using basic variable extraction
-Warning: High-level decompilation failed for getPeripheral24Pointer, using basic variable extraction
-Processing function 1300/4061: read_peripheral_data
-Warning: High-level decompilation failed for read_peripheral19_status, using basic variable extraction
-Warning: High-level decompilation failed for read_peripheral_status, using basic variable extraction
-Warning: High-level decompilation failed for set_periph19_value_return_5, using basic variable extraction
-Warning: High-level decompilation failed for set_peripheral_value_return_5, using basic variable extraction
-Warning: High-level decompilation failed for set_peripheral_value, using basic variable extraction
-Warning: High-level decompilation failed for set_peripheral19_value_return_five, using basic variable extraction
-Warning: High-level decompilation failed for set_peripheral19_value_return_5, using basic variable extraction
-Warning: High-level decompilation failed for check_and_update_peripheral_state, using basic variable extraction
-Warning: High-level decompilation failed for call_read_peripheral_data, using basic variable extraction
-Warning: High-level decompilation failed for call_read_peripheral_data, using basic variable extraction
-Warning: High-level decompilation failed for process_data_wrapper, using basic variable extraction
-Warning: High-level decompilation failed for callProcessPeripheralData, using basic variable extraction
-Processing function 1350/4061: call_read_peripheral_data
-Warning: High-level decompilation failed for call_read_peripheral_data, using basic variable extraction
+Debug: All symbols were parameters for call_function_with_zero
+Warning: High-level decompilation failed for call_function_with_zero, using basic variable extraction
+Debug: All symbols were parameters for initialize_peripherals_and_call_functions
+Warning: High-level decompilation failed for initialize_peripherals_and_call_functions, using basic variable extraction
+Debug: All symbols were parameters for resetSubsystems
+Warning: High-level decompilation failed for resetSubsystems, using basic variable extraction
+Processing function 500/4061: write_peripheral_register
+Debug: All symbols were parameters for write_peripheral_register
+Warning: High-level decompilation failed for write_peripheral_register, using basic variable extraction
+Debug: All symbols were parameters for copy_periph9_offset_to_periph100
+Warning: High-level decompilation failed for copy_periph9_offset_to_periph100, using basic variable extraction
+Debug: All symbols were parameters for configure_peripheral_registers
+Warning: High-level decompilation failed for configure_peripheral_registers, using basic variable extraction
+Debug: All symbols were parameters for configure_peripheral100_registers
+Warning: High-level decompilation failed for configure_peripheral100_registers, using basic variable extraction
+Debug: All symbols were parameters for configure_peripheral_register
+Warning: High-level decompilation failed for configure_peripheral_register, using basic variable extraction
+Debug: All symbols were parameters for reset_peripheral9_and_peripheral100
+Warning: High-level decompilation failed for reset_peripheral9_and_peripheral100, using basic variable extraction
