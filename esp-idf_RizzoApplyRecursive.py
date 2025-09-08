@@ -1,3 +1,4 @@
+#@runtime PyGhidra
 # Apply "fuzzy" function signatures from a different Ghidra project.
 #@author fuzzywalls
 #@category TNS
