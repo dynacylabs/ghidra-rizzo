@@ -634,8 +634,20 @@ def verify_variable_update(function, old_name, expected_name, expected_type, nam
             try:
                 is_param = var.isParameter()
             except AttributeError:
-                # Fallback for when isParameter() is not available
-                is_param = var.getFirstUseOffset() == 0 if hasattr(var, 'getFirstUseOffset') else False
+                # Fallback for when isParameter() is not available - use more robust detection
+                is_param = False
+                try:
+                    class_name = var.__class__.__name__
+                    if 'Parameter' in class_name:
+                        is_param = True
+                    elif hasattr(var, 'getFirstUseOffset'):
+                        is_param = var.getFirstUseOffset() == 0
+                    elif hasattr(var, 'getVariableStorage'):
+                        storage_str = str(var.getVariableStorage())
+                        is_param = ('r' in storage_str and ':' in storage_str) or 'Stack[0x' in storage_str
+                except Exception:
+                    # When in doubt, assume it's a local variable for verification purposes
+                    is_param = False
             
             if not is_param:
                 local_variables.append(var)
@@ -643,6 +655,16 @@ def verify_variable_update(function, old_name, expected_name, expected_type, nam
         # Look for a variable with the expected name and type
         found_expected = False
         found_old = False
+        
+        if len(local_variables) == 0:
+            print(f"    → No local variables found for verification")
+            return False
+        
+        print(f"    → Verifying among {len(local_variables)} local variables:")
+        for i, var in enumerate(local_variables[:5]):  # Show first 5 for debugging
+            var_name = var.getName()
+            var_type = str(var.getDataType())
+            print(f"      {i+1}. {var_name} : {var_type}")
         
         for var in local_variables:
             var_name = var.getName()
@@ -692,7 +714,40 @@ def apply_variable_update_direct(function, decompiler_symbol, enhanced_var, fina
         
         # Get all variables from the function directly (not through decompiler)
         all_variables = function.getAllVariables()
-        local_variables = [var for var in all_variables if not var.isParameter()]
+        local_variables = []
+        
+        # Filter out parameters more robustly
+        for var in all_variables:
+            is_param = False
+            try:
+                # Try the standard method first
+                is_param = var.isParameter()
+            except AttributeError:
+                # If isParameter() doesn't exist, check the class type
+                try:
+                    class_name = var.__class__.__name__
+                    if 'Parameter' in class_name:
+                        is_param = True
+                    else:
+                        # Additional heuristic: parameters typically have offset 0 or positive offsets
+                        if hasattr(var, 'getFirstUseOffset'):
+                            is_param = var.getFirstUseOffset() == 0
+                        elif hasattr(var, 'getVariableStorage'):
+                            # Parameters are usually in registers or positive stack offsets
+                            storage_str = str(var.getVariableStorage())
+                            is_param = ('r' in storage_str and ':' in storage_str) or 'Stack[0x' in storage_str
+                        else:
+                            is_param = False
+                except Exception as filter_error:
+                    print(f"    → Could not determine if variable is parameter: {filter_error}")
+                    # When in doubt, assume it's a local variable
+                    is_param = False
+            
+            if not is_param:
+                local_variables.append(var)
+        
+        print(f"    → Function has {len(all_variables)} total variables")
+        print(f"    → Filtered to {len(local_variables)} local variables")
         
         # Try to find the matching variable by various criteria
         target_variable = None
@@ -725,7 +780,17 @@ def apply_variable_update_direct(function, decompiler_symbol, enhanced_var, fina
             print(f"    → Using first available variable as fallback: {target_variable.getName()}")
         
         if not target_variable:
-            print(f"    ✗ Could not find matching function variable for {old_name}")
+            print(f"    ✗ Could not find matching function variable for '{old_name}'")
+            if local_variables:
+                print(f"    → Available local variables:")
+                for i, var in enumerate(local_variables[:10]):  # Show first 10
+                    var_name = var.getName() if hasattr(var, 'getName') else str(var)
+                    var_type = str(var.getDataType()) if hasattr(var, 'getDataType') else 'unknown'
+                    print(f"      {i+1}. {var_name} : {var_type}")
+                if len(local_variables) > 10:
+                    print(f"      ... and {len(local_variables) - 10} more")
+            else:
+                print(f"    → No local variables found in function")
             return False
         
         success = False
@@ -776,6 +841,43 @@ def apply_variable_update_direct(function, decompiler_symbol, enhanced_var, fina
         
     except Exception as e:
         print(f"    ✗ Direct variable update approach failed: {e}")
+        
+        # Fallback: Try a simpler approach without parameter filtering
+        try:
+            print(f"    → Attempting simplified direct approach (no parameter filtering)...")
+            all_variables = function.getAllVariables()
+            
+            # Find variable by name without filtering parameters
+            target_var = None
+            for var in all_variables:
+                if hasattr(var, 'getName') and var.getName() == old_name:
+                    target_var = var
+                    break
+            
+            if target_var:
+                if name_needs_update:
+                    try:
+                        target_var.setName(final_name, SourceType.USER_DEFINED)
+                        if target_var.getName() == final_name:
+                            print(f"    ✓ Simplified rename successful: {old_name} -> {final_name}")
+                            return True
+                    except Exception as simple_rename_error:
+                        print(f"    ✗ Simplified rename failed: {simple_rename_error}")
+                
+                if type_needs_update:
+                    try:
+                        target_var.setDataType(data_type, SourceType.USER_DEFINED)
+                        if str(target_var.getDataType()) == new_type:
+                            print(f"    ✓ Simplified type update successful: {old_name} : {new_type}")
+                            return True
+                    except Exception as simple_type_error:
+                        print(f"    ✗ Simplified type update failed: {simple_type_error}")
+            else:
+                print(f"    ✗ Could not find variable '{old_name}' in simplified approach")
+                
+        except Exception as simple_error:
+            print(f"    ✗ Simplified approach also failed: {simple_error}")
+        
         return False
 
 def get_function_local_variables_alternative(function):
@@ -886,16 +988,24 @@ def apply_function_variables_alternative(function, var_info_list):
                 try:
                     is_param = var.isParameter()
                 except AttributeError:
-                    # If isParameter() doesn't exist, check by variable type or other means
+                    # If isParameter() doesn't exist, check by class name and other heuristics
                     try:
-                        # Parameters usually have positive stack offsets or are in registers
-                        if hasattr(var, 'getVariableStorage'):
-                            storage = var.getVariableStorage()
-                            # This is a heuristic - parameters are usually the first few variables
-                            # or have specific storage characteristics
-                            is_param = var.getFirstUseOffset() == 0
-                    except:
-                        # If we can't determine, assume it's a local variable
+                        class_name = var.__class__.__name__
+                        if 'Parameter' in class_name:
+                            is_param = True
+                        else:
+                            # Additional heuristics for parameter detection
+                            if hasattr(var, 'getFirstUseOffset'):
+                                is_param = var.getFirstUseOffset() == 0
+                            elif hasattr(var, 'getVariableStorage'):
+                                # Parameters are usually in registers or positive stack offsets  
+                                storage_str = str(var.getVariableStorage())
+                                is_param = ('r' in storage_str and ':' in storage_str) or 'Stack[0x' in storage_str
+                            else:
+                                is_param = False
+                    except Exception as param_check_error:
+                        print(f"    → Parameter detection failed for variable: {param_check_error}")
+                        # Default to treating as local variable when unsure
                         is_param = False
                 
                 if not is_param:  # Only get local variables
