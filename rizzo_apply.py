@@ -227,6 +227,17 @@ def apply_function_variables(function, var_info_list, decompiler, high_func_db_u
         
         print(f"  Function {function.getName()}: {len(current_symbols)} current variables, {len(enhanced_vars)} enhanced variables")
         
+        # Pre-analyze for potential conflicts
+        enhanced_name_counts = {}
+        for enhanced in enhanced_vars:
+            name = enhanced['name']
+            enhanced_name_counts[name] = enhanced_name_counts.get(name, 0) + 1
+        
+        duplicate_names = {name: count for name, count in enhanced_name_counts.items() if count > 1}
+        if duplicate_names:
+            print(f"    ⚠ Warning: Enhanced data contains duplicate variable names: {duplicate_names}")
+            print("    → These will be automatically numbered to prevent conflicts")
+        
         # Debug: Show current and enhanced variables
         if current_symbols:
             print("    Current variables:")
@@ -238,80 +249,104 @@ def apply_function_variables(function, var_info_list, decompiler, high_func_db_u
             for i, enhanced in enumerate(enhanced_vars):
                 print(f"      {i+1}. {enhanced['name']} : {enhanced['type']} (storage: {enhanced.get('storage', 'N/A')})")
         
+        # Track names that will be used to prevent conflicts
+        reserved_names = set()
+        # Add existing names from symbols we won't modify
+        for symbol in local_symbols:
+            reserved_names.add(symbol.getName())
+        
+        # Track matched symbols and enhanced vars to prevent double-matching
+        matched_symbols = set()
+        used_enhanced_vars = set()
+        
         # Strategy 1: Try to match by storage location (most reliable)
-        matched_by_storage = set()
-        matched_enhanced_storage = set()
         for current in current_symbols:
-            if current['symbol'] in matched_by_storage:
+            if current['symbol'] in matched_symbols:
                 continue
                 
             current_storage = current['storage']
             if current_storage and current_storage != "":
-                for enhanced in enhanced_vars:
+                for i, enhanced in enumerate(enhanced_vars):
+                    if i in used_enhanced_vars:
+                        continue
+                        
                     enhanced_storage = enhanced.get('storage', '')
-                    if enhanced_storage == current_storage and enhanced_storage not in matched_enhanced_storage:
-                        success = apply_variable_update(current['symbol'], enhanced, high_func, high_func_db_util, function)
+                    if enhanced_storage == current_storage:
+                        success = apply_variable_update(current['symbol'], enhanced, high_func, high_func_db_util, function, reserved_names)
                         if success:
-                            matched_by_storage.add(current['symbol'])
-                            matched_enhanced_storage.add(enhanced_storage)
+                            matched_symbols.add(current['symbol'])
+                            used_enhanced_vars.add(i)
+                            # Update reserved names
+                            reserved_names.discard(current['name'])  # Remove old name
+                            reserved_names.add(enhanced['name'])     # Add new name
                             print(f"    Storage match: {current['name']} -> {enhanced['name']}")
                         break
         
         # Strategy 2: Try to match by name (for variables that weren't renamed)
-        matched_by_name = set()
-        matched_enhanced_name = set()
         for current in current_symbols:
-            if current['symbol'] in matched_by_storage:
+            if current['symbol'] in matched_symbols:
                 continue
                 
             current_name = current['name']
-            for enhanced in enhanced_vars:
+            for i, enhanced in enumerate(enhanced_vars):
+                if i in used_enhanced_vars:
+                    continue
+                    
                 enhanced_name = enhanced['name']
-                if enhanced_name == current_name and enhanced_name not in matched_enhanced_name:
-                    success = apply_variable_update(current['symbol'], enhanced, high_func, high_func_db_util, function)
+                if enhanced_name == current_name:
+                    success = apply_variable_update(current['symbol'], enhanced, high_func, high_func_db_util, function, reserved_names)
                     if success:
-                        matched_by_name.add(current['symbol'])
-                        matched_enhanced_name.add(enhanced_name)
+                        matched_symbols.add(current['symbol'])
+                        used_enhanced_vars.add(i)
                         print(f"    Name match: {current['name']} -> {enhanced['name']}")
                     break
         
         # Strategy 3: Try to match by type (for similar variables)
-        matched_by_type = set()
-        matched_enhanced_type = set()
         for current in current_symbols:
-            if current['symbol'] in matched_by_storage or current['symbol'] in matched_by_name:
+            if current['symbol'] in matched_symbols:
                 continue
                 
             current_type = current['type']
-            for enhanced in enhanced_vars:
+            for i, enhanced in enumerate(enhanced_vars):
+                if i in used_enhanced_vars:
+                    continue
+                    
                 enhanced_type = enhanced['type']
-                enhanced_key = f"{enhanced_type}_{enhanced['name']}"  # Use unique key for tracking
-                if enhanced_type == current_type and enhanced_key not in matched_enhanced_type:
-                    success = apply_variable_update(current['symbol'], enhanced, high_func, high_func_db_util, function)
+                if enhanced_type == current_type:
+                    success = apply_variable_update(current['symbol'], enhanced, high_func, high_func_db_util, function, reserved_names)
                     if success:
-                        matched_by_type.add(current['symbol'])
-                        matched_enhanced_type.add(enhanced_key)
+                        matched_symbols.add(current['symbol'])
+                        used_enhanced_vars.add(i)
+                        # Update reserved names
+                        reserved_names.discard(current['name'])  # Remove old name
+                        reserved_names.add(enhanced['name'])     # Add new name
                         print(f"    Type match: {current['name']} -> {enhanced['name']}")
                     break
         
         # Strategy 4: Match remaining variables by position (order)
-        remaining_current = [c for c in current_symbols if c['symbol'] not in matched_by_storage and c['symbol'] not in matched_by_name and c['symbol'] not in matched_by_type]
-        remaining_enhanced = [e for e in enhanced_vars if e.get('storage', '') not in matched_enhanced_storage and e['name'] not in matched_enhanced_name and f"{e['type']}_{e['name']}" not in matched_enhanced_type]
+        remaining_current = [c for c in current_symbols if c['symbol'] not in matched_symbols]
+        remaining_enhanced_indices = [i for i in range(len(enhanced_vars)) if i not in used_enhanced_vars]
         
         for i, current in enumerate(remaining_current):
-            if i < len(remaining_enhanced):
-                enhanced = remaining_enhanced[i]
-                success = apply_variable_update(current['symbol'], enhanced, high_func, high_func_db_util, function)
+            if i < len(remaining_enhanced_indices):
+                enhanced_idx = remaining_enhanced_indices[i]
+                enhanced = enhanced_vars[enhanced_idx]
+                success = apply_variable_update(current['symbol'], enhanced, high_func, high_func_db_util, function, reserved_names)
                 if success:
+                    matched_symbols.add(current['symbol'])
+                    used_enhanced_vars.add(enhanced_idx)
+                    # Update reserved names
+                    reserved_names.discard(current['name'])  # Remove old name
+                    reserved_names.add(enhanced['name'])     # Add new name
                     print(f"    Position match: {current['name']} -> {enhanced['name']}")
         
-        total_matched = len(matched_by_storage) + len(matched_by_name) + len(matched_by_type) + min(len(remaining_current), len(remaining_enhanced))
+        total_matched = len(matched_symbols)
         print(f"  Applied {total_matched} variable updates to {function.getName()}")
         
     except Exception as e:
         print(f"  Failed to apply variables to {function.getName()}: {e}")
 
-def apply_variable_update(symbol, enhanced_var, high_func, high_func_db_util, function):
+def apply_variable_update(symbol, enhanced_var, high_func, high_func_db_util, function, reserved_names):
     """Apply a single variable update using high-level function representation."""
     try:
         old_name = symbol.getName()
@@ -333,23 +368,26 @@ def apply_variable_update(symbol, enhanced_var, high_func, high_func_db_util, fu
             print(f"    Warning: Could not map type '{new_type}' for variable {old_name}")
             return False
         
-        # Check for name conflicts if we're trying to rename
+        # Improved conflict detection using reserved_names tracking
         final_name = old_name  # Default to keeping the old name
         if name_needs_update:
-            # Check if the new name would conflict with existing variables
-            conflict_found = False
-            if high_func:
-                local_symbols = high_func.getLocalSymbolMap().getSymbols()
-                for existing_symbol in local_symbols:
-                    if existing_symbol != symbol and existing_symbol.getName() == new_name:
-                        conflict_found = True
-                        break
-            
-            if not conflict_found:
+            # Check if the new name would conflict with reserved names
+            if new_name not in reserved_names:
                 final_name = new_name
             else:
-                print(f"    Warning: Name '{new_name}' already exists, keeping original name '{old_name}'")
-                name_needs_update = False
+                # Try to generate an alternative name if there's a conflict
+                base_name = new_name
+                counter = 1
+                while f"{base_name}_{counter}" in reserved_names and counter < 100:
+                    counter += 1
+                
+                if counter < 100:
+                    final_name = f"{base_name}_{counter}"
+                    print(f"    Name conflict resolved: '{new_name}' -> '{final_name}'")
+                else:
+                    print(f"    Warning: Name '{new_name}' conflicts and couldn't generate alternative, keeping original name '{old_name}'")
+                    name_needs_update = False
+                    final_name = old_name
         
         # Show what we're updating
         if name_needs_update and type_needs_update:
@@ -364,21 +402,45 @@ def apply_variable_update(symbol, enhanced_var, high_func, high_func_db_util, fu
         
         try:
             # Method 1: Try updateDBVariable with the enhanced approach
+            # Handle the most problematic cases first
+            
             if name_needs_update and type_needs_update:
-                # Update both name and type
-                high_func_db_util.updateDBVariable(
-                    symbol, final_name, data_type, SourceType.USER_DEFINED
-                )
+                # Update both name and type - most likely to cause conflicts
+                try:
+                    high_func_db_util.updateDBVariable(
+                        symbol, final_name, data_type, SourceType.USER_DEFINED
+                    )
+                except Exception as name_type_error:
+                    print(f"    ✗ Combined update failed: {name_type_error}")
+                    # Try type-only update as fallback
+                    try:
+                        high_func_db_util.updateDBVariable(
+                            symbol, old_name, data_type, SourceType.USER_DEFINED
+                        )
+                        print(f"    ⚠ Applied type update only (name update failed due to: {name_type_error})")
+                    except Exception as type_fallback_error:
+                        print(f"    ✗ Type-only fallback also failed: {type_fallback_error}")
+                        success = False
+                        
             elif type_needs_update:
-                # Just update type, keep the name
+                # Just update type, keep the name - usually safer
                 high_func_db_util.updateDBVariable(
                     symbol, old_name, data_type, SourceType.USER_DEFINED
                 )
+                
             elif name_needs_update:
-                # Just update name, keep the type
-                high_func_db_util.updateDBVariable(
-                    symbol, final_name, symbol.getDataType(), SourceType.USER_DEFINED
-                )
+                # Just update name, keep the type - check for duplicates again
+                try:
+                    high_func_db_util.updateDBVariable(
+                        symbol, final_name, symbol.getDataType(), SourceType.USER_DEFINED
+                    )
+                except Exception as name_error:
+                    if "DuplicateNameException" in str(name_error):
+                        print(f"    ✗ Name update failed due to duplicate: {name_error}")
+                        print(f"    → Keeping original name '{old_name}'")
+                        success = False
+                    else:
+                        raise name_error
             
             # Force commit the changes immediately
             if high_func:
@@ -430,7 +492,9 @@ def apply_variable_update(symbol, enhanced_var, high_func, high_func_db_util, fu
                 
                 status_msg = ", ".join(status_parts)
                 if partial_success:
-                    print(f"    ⚠ Partial success: {status_msg}")
+                    print(f"    ⚠ Partial success - {status_msg}")
+                    if name_needs_update and updated_name != final_name:
+                        print(f"    → Type update successful, but name update failed (this is a known Ghidra limitation)")
                     success = True  # Consider partial success as success
                 else:
                     print(f"    ✗ Update failed: {status_msg}")
