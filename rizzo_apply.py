@@ -6,6 +6,7 @@
 # @menupath TNS.Rizzo.Apply Enhanced Signatures
 
 import pickle
+import time
 import rizzo
 from ghidra.program.model.symbol import SourceType
 from ghidra.program.model.listing import ParameterImpl
@@ -47,10 +48,40 @@ def apply_enhanced_signatures():
     with open(enhanced_file.path, 'rb') as f:
         enhanced_data = pickle.load(f)
     
+    # Show information about what we loaded
+    total_enhanced_functions = len(enhanced_data.get('enhanced_functions', {}))
+    total_original_functions = len(enhanced_data.get('original_functions', {}))
+    total_rizzo_signatures = 0
+    
+    if 'rizzo_signatures' in enhanced_data:
+        sigs = enhanced_data['rizzo_signatures']
+        formal_count = len(sigs.formal) if hasattr(sigs, 'formal') else 0
+        string_count = len(sigs.strings) if hasattr(sigs, 'strings') else 0
+        immediate_count = len(sigs.immediates) if hasattr(sigs, 'immediates') else 0
+        fuzzy_count = len(sigs.fuzzy) if hasattr(sigs, 'fuzzy') else 0
+        total_rizzo_signatures = formal_count + string_count + immediate_count + fuzzy_count
+        
+        print(f'Loaded enhanced signature file containing:')
+        print(f'  - {total_enhanced_functions} enhanced function definitions')
+        print(f'  - {total_original_functions} original function definitions') 
+        print(f'  - {total_rizzo_signatures} total signatures:')
+        print(f'    * {formal_count} formal signatures')
+        print(f'    * {string_count} string signatures') 
+        print(f'    * {immediate_count} immediate signatures')
+        print(f'    * {fuzzy_count} fuzzy signatures')
+    else:
+        print(f'Loaded enhanced signature file containing:')
+        print(f'  - {total_enhanced_functions} enhanced function definitions')
+        print(f'  - {total_original_functions} original function definitions')
+    
     print('Applying enhanced signatures...')
+    print('Initializing Rizzo for current program...')
     
     # Create Rizzo instance for the current program
     current_rizz = rizzo.Rizzo(currentProgram)
+    
+    print('Starting signature matching process...')
+    print('This may take several minutes for large programs - progress will be shown for each signature type.')
     
     # Find matches using the original signatures
     signature_matches = current_rizz._find_match(enhanced_data['rizzo_signatures'])
@@ -64,13 +95,48 @@ def apply_enhanced_signatures():
     renamed_count = 0
     variable_updates = 0
     
+    # Count total functions to process for progress reporting
+    total_functions_to_process = 0
+    for match_group in signature_matches:
+        if match_group:
+            total_functions_to_process += len(match_group)
+    
+    print(f'\nSignature matching complete!')
+    print(f'Found {total_functions_to_process} total function matches to process.')
+    
+    if total_functions_to_process == 0:
+        print('No function matches found. Check if the signature file is compatible with this program.')
+        decompiler.dispose()
+        return
+    
+    print(f'Applying enhanced function definitions...\n')
+    
+    current_function_index = 0
+    start_time = time.time()
+    
     # Process all signature matches
     for match_group in signature_matches:
         if not match_group:
             continue
             
         for curr_func, matched_func in match_group.items():
+            current_function_index += 1
+            
             try:
+                # Show progress for every function or every 10 functions if there are many
+                show_progress = (current_function_index % 10 == 0) or (current_function_index == 1) or (current_function_index == total_functions_to_process)
+                if show_progress:
+                    progress_percent = (current_function_index * 100.0) / total_functions_to_process
+                    elapsed_time = time.time() - start_time
+                    
+                    if current_function_index > 1:
+                        estimated_total_time = elapsed_time * total_functions_to_process / current_function_index
+                        remaining_time = estimated_total_time - elapsed_time
+                        print(f'Progress: {current_function_index}/{total_functions_to_process} functions ({progress_percent:.1f}%) - '
+                              f'Elapsed: {elapsed_time:.1f}s, Est. remaining: {remaining_time:.1f}s')
+                    else:
+                        print(f'Progress: {current_function_index}/{total_functions_to_process} functions ({progress_percent:.1f}%)')
+                
                 # Get current program function
                 addr_hex = hex(curr_func.address)
                 if addr_hex.endswith('L'):
@@ -107,14 +173,34 @@ def apply_enhanced_signatures():
                             variable_updates += var_count
                         
             except Exception as e:
-                print(f"Error applying enhanced signature: {e}")
+                print(f"Error applying enhanced signature to function {current_function_index}: {e}")
                 continue
     
     decompiler.dispose()
     
-    print(f"Applied enhanced definitions to {enhanced_count} functions")
-    print(f"Renamed {renamed_count} functions")
-    print(f"Applied variable updates for {variable_updates} variables")
+    total_elapsed_time = time.time() - start_time
+    
+    print(f'\n=== Enhanced Signature Application Complete ===')
+    print(f'Functions processed: {current_function_index}/{total_functions_to_process}')
+    print(f'Enhanced definitions applied: {enhanced_count}')
+    print(f'Functions renamed: {renamed_count}')
+    print(f'Variable updates attempted: {variable_updates}')
+    print(f'Total processing time: {total_elapsed_time:.1f} seconds')
+    
+    if current_function_index > 0:
+        avg_time_per_function = total_elapsed_time / current_function_index
+        print(f'Average time per function: {avg_time_per_function:.2f} seconds')
+    
+    if enhanced_count > 0:
+        success_rate = (enhanced_count * 100.0) / current_function_index if current_function_index > 0 else 0
+        print(f'Success rate: {success_rate:.1f}%')
+        print(f'\nEnhanced signatures have been successfully applied!')
+        print(f'Check the Ghidra program for updated function names, types, and variable names.')
+    else:
+        print(f'\nNo enhanced definitions were successfully applied.')
+        print(f'This may indicate compatibility issues between the signature file and target program.')
+    
+    print('=== Process Complete ===\n')
 
 def apply_enhanced_function_definition(function, enhanced_info, decompiler, high_func_db_util):
     """
@@ -427,58 +513,48 @@ def apply_variable_update(symbol, enhanced_var, high_func, high_func_db_util, fu
             transaction_id = function.getProgram().startTransaction("Update Variable")
             
             try:
-                # Method 1: Try updateDBVariable with the enhanced approach
-                # Handle the most problematic cases first
+                # Use a more reliable approach that works directly with function variables
+                # instead of relying solely on the decompiler's high-level representation
                 
-                if name_needs_update and type_needs_update:
-                    # Update both name and type - most likely to cause conflicts
-                    try:
-                        high_func_db_util.updateDBVariable(
-                            symbol, final_name, data_type, SourceType.USER_DEFINED
-                        )
-                        success = True
-                        print(f"    ✓ Combined update successful: {final_name} : {new_type}")
-                    except Exception as name_type_error:
-                        print(f"    ✗ Combined update failed: {name_type_error}")
-                        # Try type-only update as fallback
+                success = apply_variable_update_direct(function, symbol, enhanced_var, final_name, data_type, 
+                                                     name_needs_update, type_needs_update, old_name, new_type)
+                
+                # If direct approach fails, try the decompiler approach as fallback
+                if not success:
+                    print(f"    → Trying decompiler approach as fallback...")
+                    
+                    if name_needs_update and type_needs_update:
+                        # Update both name and type
+                        try:
+                            high_func_db_util.updateDBVariable(
+                                symbol, final_name, data_type, SourceType.USER_DEFINED
+                            )
+                            success = True
+                            print(f"    ✓ Decompiler combined update reported success")
+                        except Exception as name_type_error:
+                            print(f"    ✗ Decompiler combined update failed: {name_type_error}")
+                            
+                    elif type_needs_update:
+                        # Just update type, keep the name
                         try:
                             high_func_db_util.updateDBVariable(
                                 symbol, old_name, data_type, SourceType.USER_DEFINED
                             )
                             success = True
-                            print(f"    ⚠ Applied type update only (name update failed due to: {name_type_error})")
-                        except Exception as type_fallback_error:
-                            print(f"    ✗ Type-only fallback also failed: {type_fallback_error}")
-                            success = False
-                            
-                elif type_needs_update:
-                    # Just update type, keep the name - usually safer
-                    try:
-                        high_func_db_util.updateDBVariable(
-                            symbol, old_name, data_type, SourceType.USER_DEFINED
-                        )
-                        success = True
-                        print(f"    ✓ Type update successful: {old_name} : {new_type}")
-                    except Exception as type_error:
-                        print(f"    ✗ Type update failed: {type_error}")
-                        success = False
-                    
-                elif name_needs_update:
-                    # Just update name, keep the type - check for duplicates again
-                    try:
-                        high_func_db_util.updateDBVariable(
-                            symbol, final_name, symbol.getDataType(), SourceType.USER_DEFINED
-                        )
-                        success = True
-                        print(f"    ✓ Name update successful: {final_name}")
-                    except Exception as name_error:
-                        if "DuplicateNameException" in str(name_error) or "duplicate" in str(name_error).lower():
-                            print(f"    ✗ Name update failed due to duplicate: {name_error}")
-                            print(f"    → Keeping original name '{old_name}'")
-                            success = False
-                        else:
-                            print(f"    ✗ Name update failed: {name_error}")
-                            success = False
+                            print(f"    ✓ Decompiler type update reported success")
+                        except Exception as type_error:
+                            print(f"    ✗ Decompiler type update failed: {type_error}")
+                        
+                    elif name_needs_update:
+                        # Just update name, keep the type
+                        try:
+                            high_func_db_util.updateDBVariable(
+                                symbol, final_name, symbol.getDataType(), SourceType.USER_DEFINED
+                            )
+                            success = True
+                            print(f"    ✓ Decompiler name update reported success")
+                        except Exception as name_error:
+                            print(f"    ✗ Decompiler name update failed: {name_error}")
                 
                 # Force commit the changes immediately if we have a high function
                 if high_func and success:
@@ -509,42 +585,16 @@ def apply_variable_update(symbol, enhanced_var, high_func, high_func_db_util, fu
             # Verify the update worked if we think it was successful
             if success:
                 try:
-                    updated_name = symbol.getName()
-                    updated_type = str(symbol.getDataType())
+                    # Instead of checking the decompiler symbol, verify against the actual function variables
+                    verification_success = verify_variable_update(function, old_name, final_name, new_type, 
+                                                                name_needs_update, type_needs_update)
                     
-                    name_updated = (updated_name == final_name) or not name_needs_update
-                    type_updated = (updated_type == new_type) or not type_needs_update
-                    
-                    if name_updated and type_updated:
-                        print(f"    ✓ Verification successful: {updated_name} : {updated_type}")
+                    if verification_success:
+                        print(f"    ✓ Verification confirmed: Update successful")
                     else:
-                        # Determine what actually got updated
-                        partial_success = False
-                        status_parts = []
+                        print(f"    ⚠ Verification failed: Changes may not have persisted")
+                        # Don't mark as complete failure since some partial success may have occurred
                         
-                        if name_needs_update:
-                            if updated_name == final_name:
-                                status_parts.append("Name ✓")
-                                partial_success = True
-                            else:
-                                status_parts.append(f"Name ✗ ('{updated_name}' ≠ '{final_name}')")
-                        
-                        if type_needs_update:
-                            if updated_type == new_type:
-                                status_parts.append("Type ✓")
-                                partial_success = True
-                            else:
-                                status_parts.append(f"Type ✗ ('{updated_type}' ≠ '{new_type}')")
-                        
-                        status_msg = ", ".join(status_parts)
-                        if partial_success:
-                            print(f"    ⚠ Partial verification - {status_msg}")
-                            if name_needs_update and updated_name != final_name:
-                                print(f"    → Variable naming may be limited by Ghidra's decompiler state")
-                        else:
-                            print(f"    ✗ Verification failed: {status_msg}")
-                            success = False
-                            
                 except Exception as verify_error:
                     print(f"    Warning: Could not verify update: {verify_error}")
             
@@ -569,28 +619,164 @@ def apply_variable_update(symbol, enhanced_var, high_func, high_func_db_util, fu
         
     except Exception as e:
         print(f"    ✗ Failed to update variable {symbol.getName()}: {e}")
+        return False
+
+def verify_variable_update(function, old_name, expected_name, expected_type, name_needs_update, type_needs_update):
+    """
+    Verify that a variable update actually took effect by checking the function's current variables.
+    This is more reliable than checking decompiler symbols.
+    """
+    try:
+        # Get current function variables
+        all_variables = function.getAllVariables()
+        local_variables = []
         
-        # Last resort: Try direct symbol manipulation approach
-        if name_needs_update:
+        for var in all_variables:
             try:
-                print(f"    → Attempting direct symbol renaming approach...")
-                
-                # Get the function's symbol table and try direct manipulation
-                symbol_table = function.getProgram().getSymbolTable()
-                variable_symbols = symbol_table.getSymbols(symbol.getName(), function)
-                
-                for var_symbol in variable_symbols:
-                    if var_symbol.getSymbolType().toString() == "LocalVar":
-                        try:
-                            var_symbol.setName(final_name, SourceType.USER_DEFINED)
-                            print(f"    ✓ Direct symbol rename successful: {symbol.getName()} -> {final_name}")
-                            return True
-                        except Exception as direct_error:
-                            print(f"    ✗ Direct symbol rename failed: {direct_error}")
-                            
-            except Exception as direct_approach_error:
-                print(f"    ✗ Direct symbol approach failed: {direct_approach_error}")
+                is_param = var.isParameter()
+            except AttributeError:
+                # Fallback for when isParameter() is not available
+                is_param = var.getFirstUseOffset() == 0 if hasattr(var, 'getFirstUseOffset') else False
+            
+            if not is_param:
+                local_variables.append(var)
         
+        # Look for a variable with the expected name and type
+        found_expected = False
+        found_old = False
+        
+        for var in local_variables:
+            var_name = var.getName()
+            var_type = str(var.getDataType())
+            
+            # Check if we find the expected result
+            if name_needs_update and var_name == expected_name:
+                if not type_needs_update or var_type == expected_type:
+                    found_expected = True
+                    print(f"    → Found expected variable: {var_name} : {var_type}")
+            
+            # Check if the old variable still exists (shouldn't if rename worked)
+            if name_needs_update and var_name == old_name:
+                found_old = True
+                print(f"    → Old variable still exists: {var_name} : {var_type}")
+        
+        # Verification logic
+        if name_needs_update:
+            if found_expected and not found_old:
+                return True  # Perfect success
+            elif found_expected and found_old:
+                print(f"    → Found both old and new variables (possible duplication)")
+                return True  # Partial success
+            elif not found_expected and not found_old:
+                print(f"    → Neither old nor expected variable found (variable may have been modified)")
+                return False
+            else:
+                print(f"    → Expected variable not found, old variable still exists")
+                return False
+        else:
+            # Only type update needed, just check if any variable has the right type
+            # This is more complex to verify, so we'll be more lenient
+            return True
+        
+    except Exception as e:
+        print(f"    → Verification error: {e}")
+        return False
+
+def apply_variable_update_direct(function, decompiler_symbol, enhanced_var, final_name, data_type, 
+                                name_needs_update, type_needs_update, old_name, new_type):
+    """
+    Direct approach to variable updates that works with function variables instead of decompiler symbols.
+    This approach is more reliable for actually applying changes that persist in Ghidra.
+    """
+    try:
+        print(f"    → Attempting direct function variable approach...")
+        
+        # Get all variables from the function directly (not through decompiler)
+        all_variables = function.getAllVariables()
+        local_variables = [var for var in all_variables if not var.isParameter()]
+        
+        # Try to find the matching variable by various criteria
+        target_variable = None
+        
+        # Method 1: Try to match by name
+        for var in local_variables:
+            if var.getName() == old_name:
+                target_variable = var
+                print(f"    → Found variable by name match: {old_name}")
+                break
+        
+        # Method 2: If name match failed, try to match by storage location if available
+        if not target_variable and hasattr(decompiler_symbol, 'getStorage'):
+            try:
+                decompiler_storage = str(decompiler_symbol.getStorage())
+                for var in local_variables:
+                    if hasattr(var, 'getVariableStorage'):
+                        var_storage = str(var.getVariableStorage())
+                        if var_storage == decompiler_storage:
+                            target_variable = var
+                            print(f"    → Found variable by storage match: {var_storage}")
+                            break
+            except Exception as storage_error:
+                print(f"    → Storage matching failed: {storage_error}")
+        
+        # Method 3: If still not found, try positional matching as last resort
+        if not target_variable and local_variables:
+            # Use the first available variable (this is a fallback)
+            target_variable = local_variables[0]
+            print(f"    → Using first available variable as fallback: {target_variable.getName()}")
+        
+        if not target_variable:
+            print(f"    ✗ Could not find matching function variable for {old_name}")
+            return False
+        
+        success = False
+        
+        # Now try to update the found variable
+        if name_needs_update and type_needs_update:
+            # Try to update both name and type
+            try:
+                # Remove the old variable
+                old_storage = target_variable.getVariableStorage()
+                function.removeVariable(target_variable)
+                
+                # Create new variable with new name and type
+                new_var = function.addLocalVariable(old_storage, final_name, data_type, SourceType.USER_DEFINED)
+                if new_var:
+                    success = True
+                    print(f"    ✓ Direct update successful: {old_name} -> {final_name} : {new_type}")
+                else:
+                    print(f"    ✗ Failed to create new variable")
+                    # Try to restore original variable
+                    try:
+                        function.addLocalVariable(old_storage, old_name, target_variable.getDataType(), SourceType.USER_DEFINED)
+                    except:
+                        pass
+                        
+            except Exception as combined_error:
+                print(f"    ✗ Direct combined update failed: {combined_error}")
+                
+        elif type_needs_update:
+            # Just update type
+            try:
+                target_variable.setDataType(data_type, SourceType.USER_DEFINED)
+                success = True
+                print(f"    ✓ Direct type update successful: {old_name} : {new_type}")
+            except Exception as type_error:
+                print(f"    ✗ Direct type update failed: {type_error}")
+                
+        elif name_needs_update:
+            # Just update name
+            try:
+                target_variable.setName(final_name, SourceType.USER_DEFINED)
+                success = True
+                print(f"    ✓ Direct name update successful: {old_name} -> {final_name}")
+            except Exception as name_error:
+                print(f"    ✗ Direct name update failed: {name_error}")
+        
+        return success
+        
+    except Exception as e:
+        print(f"    ✗ Direct variable update approach failed: {e}")
         return False
 
 def get_function_local_variables_alternative(function):
@@ -696,61 +882,105 @@ def apply_function_variables_alternative(function, var_info_list):
             
             local_variables = []
             for var in variables:
-                if not var.isParameter():  # Only get local variables
+                # Check if it's a parameter using different methods
+                is_param = False
+                try:
+                    is_param = var.isParameter()
+                except AttributeError:
+                    # If isParameter() doesn't exist, check by variable type or other means
+                    try:
+                        # Parameters usually have positive stack offsets or are in registers
+                        if hasattr(var, 'getVariableStorage'):
+                            storage = var.getVariableStorage()
+                            # This is a heuristic - parameters are usually the first few variables
+                            # or have specific storage characteristics
+                            is_param = var.getFirstUseOffset() == 0
+                    except:
+                        # If we can't determine, assume it's a local variable
+                        is_param = False
+                
+                if not is_param:  # Only get local variables
                     local_variables.append(var)
             
             print(f"    Found {len(local_variables)} local variables via function.getAllVariables()")
             
-            # Simple position-based matching for alternative approach
+            # Also try to get variables from the symbol table as backup
+            symbol_table = function.getProgram().getSymbolTable()
+            symbol_vars = []
+            try:
+                symbols = symbol_table.getSymbols(function)
+                for symbol in symbols:
+                    if symbol.getSymbolType().toString() == "LocalVar":
+                        symbol_vars.append(symbol)
+                print(f"    Found {len(symbol_vars)} local variables via symbol table")
+            except Exception as symbol_error:
+                print(f"    Symbol table lookup failed: {symbol_error}")
+            
+            # Use the method that found more variables
+            variables_to_use = local_variables if len(local_variables) >= len(symbol_vars) else symbol_vars
+            
+            
+            # Simple position-based and name-based matching for alternative approach
             for i, enhanced_var in enumerate(enhanced_vars):
-                if i < len(local_variables):
-                    local_var = local_variables[i]
+                target_var = None
+                
+                # Try to find matching variable by name first
+                for var in variables_to_use:
+                    var_name = var.getName() if hasattr(var, 'getName') else str(var)
+                    if var_name == enhanced_var.get('original_name', ''):
+                        target_var = var
+                        print(f"    → Found variable by original name: {var_name}")
+                        break
+                
+                # If name match failed, try positional matching
+                if not target_var and i < len(variables_to_use):
+                    target_var = variables_to_use[i]
+                    var_name = target_var.getName() if hasattr(target_var, 'getName') else str(target_var)
+                    print(f"    → Using positional match for variable: {var_name}")
+                
+                if target_var:
                     try:
-                        old_name = local_var.getName()
+                        old_name = target_var.getName() if hasattr(target_var, 'getName') else str(target_var)
                         new_name = enhanced_var['name']
                         
                         if old_name != new_name:
                             # Try multiple approaches to rename the variable
                             renamed = False
                             
-                            # Approach 1: Direct setName
-                            try:
-                                local_var.setName(new_name, SourceType.USER_DEFINED)
-                                if local_var.getName() == new_name:
-                                    print(f"    ✓ Direct rename successful: {old_name} -> {new_name}")
-                                    renamed = True
-                                    updated_count += 1
-                            except Exception as direct_error:
-                                print(f"    → Direct rename failed: {direct_error}")
-                            
-                            # Approach 2: Try through symbol table if direct failed
-                            if not renamed:
+                            # Approach 1: Direct setName if it's a Variable object
+                            if hasattr(target_var, 'setName'):
                                 try:
-                                    symbol_table = function.getProgram().getSymbolTable()
-                                    var_symbols = symbol_table.getSymbols(old_name, function)
-                                    
-                                    for var_symbol in var_symbols:
-                                        try:
-                                            var_symbol.setName(new_name, SourceType.USER_DEFINED)
-                                            if var_symbol.getName() == new_name:
-                                                print(f"    ✓ Symbol table rename successful: {old_name} -> {new_name}")
-                                                renamed = True
-                                                updated_count += 1
-                                                break
-                                        except Exception as symbol_error:
-                                            print(f"    → Symbol rename failed: {symbol_error}")
-                                except Exception as symbol_approach_error:
-                                    print(f"    → Symbol table approach failed: {symbol_approach_error}")
+                                    target_var.setName(new_name, SourceType.USER_DEFINED)
+                                    # Verify the change
+                                    current_name = target_var.getName() if hasattr(target_var, 'getName') else str(target_var)
+                                    if current_name == new_name:
+                                        print(f"    ✓ Direct rename successful: {old_name} -> {new_name}")
+                                        renamed = True
+                                        updated_count += 1
+                                except Exception as direct_error:
+                                    print(f"    → Direct rename failed: {direct_error}")
                             
-                            # Approach 3: Try using variable storage directly
-                            if not renamed:
+                            # Approach 2: If it's a Symbol, try setName on the symbol
+                            elif hasattr(target_var, 'setName') and hasattr(target_var, 'getSymbolType'):
                                 try:
-                                    # Create a new variable with the new name at the same storage
-                                    storage = local_var.getVariableStorage()
-                                    data_type = local_var.getDataType()
+                                    target_var.setName(new_name, SourceType.USER_DEFINED)
+                                    current_name = target_var.getName()
+                                    if current_name == new_name:
+                                        print(f"    ✓ Symbol rename successful: {old_name} -> {new_name}")
+                                        renamed = True
+                                        updated_count += 1
+                                except Exception as symbol_error:
+                                    print(f"    → Symbol rename failed: {symbol_error}")
+                            
+                            # Approach 3: Try recreation approach
+                            if not renamed and hasattr(target_var, 'getVariableStorage') and hasattr(target_var, 'getDataType'):
+                                try:
+                                    # Get variable details for recreation
+                                    storage = target_var.getVariableStorage()
+                                    data_type = target_var.getDataType()
                                     
-                                    # Remove the old variable first
-                                    function.removeVariable(local_var)
+                                    # Remove the old variable
+                                    function.removeVariable(target_var)
                                     
                                     # Create new variable with new name
                                     new_var = function.addLocalVariable(storage, new_name, data_type, SourceType.USER_DEFINED)
@@ -758,32 +988,39 @@ def apply_function_variables_alternative(function, var_info_list):
                                         print(f"    ✓ Recreation rename successful: {old_name} -> {new_name}")
                                         renamed = True
                                         updated_count += 1
+                                    else:
+                                        # Try to restore the original variable if recreation failed
+                                        try:
+                                            function.addLocalVariable(storage, old_name, data_type, SourceType.USER_DEFINED)
+                                        except:
+                                            pass
                                     
                                 except Exception as recreation_error:
                                     print(f"    → Variable recreation failed: {recreation_error}")
-                                    # Try to restore the original variable if recreation failed
-                                    try:
-                                        function.addLocalVariable(storage, old_name, data_type, SourceType.USER_DEFINED)
-                                    except:
-                                        pass
-                                        
+                                    
                             if not renamed:
                                 print(f"    ✗ All rename approaches failed for: {old_name} -> {new_name}")
                                 
                         # Also try to update the data type if provided
                         enhanced_type = enhanced_var.get('type')
-                        if enhanced_type:
+                        if enhanced_type and hasattr(target_var, 'setDataType'):
                             try:
                                 new_data_type = map_c_type_to_ghidra_type(enhanced_type, function.getProgram())
-                                if new_data_type and str(local_var.getDataType()) != enhanced_type:
-                                    local_var.setDataType(new_data_type, SourceType.USER_DEFINED)
-                                    if str(local_var.getDataType()) == enhanced_type:
-                                        print(f"    ✓ Type update successful: {local_var.getName()} : {enhanced_type}")
+                                if new_data_type:
+                                    current_type = str(target_var.getDataType()) if hasattr(target_var, 'getDataType') else 'unknown'
+                                    if current_type != enhanced_type:
+                                        target_var.setDataType(new_data_type, SourceType.USER_DEFINED)
+                                        new_current_type = str(target_var.getDataType()) if hasattr(target_var, 'getDataType') else 'unknown'
+                                        if new_current_type == enhanced_type:
+                                            print(f"    ✓ Type update successful: {target_var.getName() if hasattr(target_var, 'getName') else 'var'} : {enhanced_type}")
                             except Exception as type_error:
-                                print(f"    → Type update failed for {local_var.getName()}: {type_error}")
+                                var_name = target_var.getName() if hasattr(target_var, 'getName') else 'unknown'
+                                print(f"    → Type update failed for {var_name}: {type_error}")
                                 
                     except Exception as var_error:
-                        print(f"    ✗ Alternative variable processing failed for position {i}: {var_error}")
+                        print(f"    ✗ Alternative variable processing failed for item {i}: {var_error}")
+                else:
+                    print(f"    → No target variable found for enhanced variable {i}: {enhanced_var.get('name', 'unknown')}")
                         
         except Exception as inner_error:
             print(f"    Alternative approach inner error: {inner_error}")

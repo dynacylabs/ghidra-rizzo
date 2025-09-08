@@ -829,10 +829,18 @@ def find_signature_matches(new_signature, curr_signature, new_functions,
                 key_error_count += 1
         
         processed_count += 1
-        if processed_count % 1000 == 0 or processed_count == total_signatures:
-            print("    Processed {}/{} signatures ({:.1f}%)".format(
-                processed_count, total_signatures,
-                (processed_count * 100.0) / total_signatures if total_signatures > 0 else 0))
+        
+        # Show progress more frequently to provide better feedback
+        if processed_count % 100 == 0 or processed_count == total_signatures or processed_count == 1:
+            progress_percent = (processed_count * 100.0) / total_signatures if total_signatures > 0 else 0
+            elapsed_time = time.time() - start
+            if processed_count > 1:
+                estimated_total_time = elapsed_time * total_signatures / processed_count
+                remaining_time = estimated_total_time - elapsed_time
+                print("    Processed {}/{} signatures ({:.1f}%) - Elapsed: {:.1f}s, Est. remaining: {:.1f}s".format(
+                    processed_count, total_signatures, progress_percent, elapsed_time, remaining_time))
+            else:
+                print("    Started processing {} signatures...".format(total_signatures))
 
     end = time.time()
 
