@@ -62,6 +62,7 @@ def apply_enhanced_signatures():
     
     enhanced_count = 0
     renamed_count = 0
+    variable_updates = 0
     
     # Process all signature matches
     for match_group in signature_matches:
@@ -100,6 +101,11 @@ def apply_enhanced_signatures():
                         if enhanced_func_info['name'] != current_function.getName():
                             renamed_count += 1
                         
+                        # Count variable updates
+                        var_count = len(enhanced_func_info.get('local_variables', []))
+                        if var_count > 0:
+                            variable_updates += var_count
+                        
             except Exception as e:
                 print(f"Error applying enhanced signature: {e}")
                 continue
@@ -108,6 +114,7 @@ def apply_enhanced_signatures():
     
     print(f"Applied enhanced definitions to {enhanced_count} functions")
     print(f"Renamed {renamed_count} functions")
+    print(f"Applied variable updates for {variable_updates} variables")
 
 def apply_enhanced_function_definition(function, enhanced_info, decompiler, high_func_db_util):
     """
@@ -183,68 +190,144 @@ def apply_function_comment(function, comment):
         print(f"Failed to apply comment to {function.getName()}: {e}")
 
 def apply_function_variables(function, var_info_list, decompiler, high_func_db_util):
-    """Apply local variable names and types to a function."""
+    """Apply local variable names and types to a function using high-level representation."""
+    if not var_info_list:
+        return
+        
     try:
         # Get high-level function representation
         decompiler_results = decompiler.decompileFunction(function, 30, None)
         if not decompiler_results or not decompiler_results.decompileCompleted():
+            print(f"  Could not decompile {function.getName()} for variable restoration")
             return
             
         high_func = decompiler_results.getHighFunction()
         if not high_func:
+            print(f"  Could not get high-level function for {function.getName()}")
             return
             
         local_symbols = high_func.getLocalSymbolMap().getSymbols()
         
-        # Create mapping from enhanced variable info
-        var_mapping = {}
-        for var_info in var_info_list:
-            if var_info.get('category') == 'local':
-                var_mapping[var_info['name']] = var_info
+        # Create lists of current symbols and enhanced variables for matching
+        current_symbols = []
+        enhanced_vars = []
         
-        # Apply variable renaming and retyping
         for symbol in local_symbols:
-            if symbol.isParameter():
-                continue  # Skip parameters
+            if not symbol.isParameter():  # Skip parameters
+                current_symbols.append({
+                    'symbol': symbol,
+                    'name': symbol.getName(),
+                    'type': str(symbol.getDataType()),
+                    'storage': str(symbol.getStorage()) if hasattr(symbol, 'getStorage') else ""
+                })
+        
+        for var_info in var_info_list:
+            if var_info.get('category') == 'local' and not var_info.get('is_parameter', False):
+                enhanced_vars.append(var_info)
+        
+        print(f"  Function {function.getName()}: {len(current_symbols)} current variables, {len(enhanced_vars)} enhanced variables")
+        
+        # Strategy 1: Try to match by storage location (most reliable)
+        matched_by_storage = set()
+        for current in current_symbols:
+            if current['symbol'] in matched_by_storage:
+                continue
                 
-            old_name = symbol.getName()
-            
-            # Try to find corresponding enhanced variable info
-            # This is a best-effort matching since variable names may have changed
-            enhanced_var = None
-            for var_info in var_info_list:
-                if var_info.get('category') == 'local':
-                    # Try exact name match first
-                    if old_name == var_info['name']:
-                        enhanced_var = var_info
+            current_storage = current['storage']
+            if current_storage and current_storage != "":
+                for enhanced in enhanced_vars:
+                    if enhanced.get('storage') == current_storage and enhanced not in matched_by_storage:
+                        success = apply_variable_update(current['symbol'], enhanced, high_func, high_func_db_util, function)
+                        if success:
+                            matched_by_storage.add(current['symbol'])
+                            matched_by_storage.add(enhanced)
+                            print(f"    Storage match: {current['name']} -> {enhanced['name']}")
                         break
-                    
-            if enhanced_var:
-                try:
-                    new_name = enhanced_var['name']
-                    data_type = map_c_type_to_ghidra_type(enhanced_var['type'])
-                    
-                    if data_type:
-                        high_func_db_util.updateDBVariable(
-                            symbol, new_name, data_type, SourceType.USER_DEFINED
-                        )
-                        
-                        # Commit parameter changes
-                        high_func_db_util.commitParamsToDatabase(
-                            high_func,
-                            True,
-                            HighFunctionDBUtil.ReturnCommitOption.COMMIT,
-                            SourceType.USER_DEFINED,
-                        )
-                        
-                        if new_name != old_name:
-                            print(f"  Variable: {old_name} -> {new_name}")
-                            
-                except Exception as e:
-                    print(f"  Failed to update variable {old_name}: {e}")
-                    
+        
+        # Strategy 2: Try to match by name (for variables that weren't renamed)
+        matched_by_name = set()
+        for current in current_symbols:
+            if current['symbol'] in matched_by_storage:
+                continue
+                
+            current_name = current['name']
+            for enhanced in enhanced_vars:
+                if enhanced not in matched_by_storage and enhanced['name'] == current_name:
+                    success = apply_variable_update(current['symbol'], enhanced, high_func, high_func_db_util, function)
+                    if success:
+                        matched_by_name.add(current['symbol'])
+                        matched_by_name.add(enhanced)
+                        print(f"    Name match: {current['name']} -> {enhanced['name']}")
+                    break
+        
+        # Strategy 3: Try to match by type (for similar variables)
+        matched_by_type = set()
+        for current in current_symbols:
+            if current['symbol'] in matched_by_storage or current['symbol'] in matched_by_name:
+                continue
+                
+            current_type = current['type']
+            for enhanced in enhanced_vars:
+                if (enhanced not in matched_by_storage and enhanced not in matched_by_name and
+                    enhanced['type'] == current_type):
+                    success = apply_variable_update(current['symbol'], enhanced, high_func, high_func_db_util, function)
+                    if success:
+                        matched_by_type.add(current['symbol'])
+                        matched_by_type.add(enhanced)
+                        print(f"    Type match: {current['name']} -> {enhanced['name']}")
+                    break
+        
+        # Strategy 4: Match remaining variables by position (order)
+        remaining_current = [c for c in current_symbols if c['symbol'] not in matched_by_storage and c['symbol'] not in matched_by_name and c['symbol'] not in matched_by_type]
+        remaining_enhanced = [e for e in enhanced_vars if e not in matched_by_storage and e not in matched_by_name and e not in matched_by_type]
+        
+        for i, current in enumerate(remaining_current):
+            if i < len(remaining_enhanced):
+                enhanced = remaining_enhanced[i]
+                success = apply_variable_update(current['symbol'], enhanced, high_func, high_func_db_util, function)
+                if success:
+                    print(f"    Position match: {current['name']} -> {enhanced['name']}")
+        
+        total_matched = len(matched_by_storage) + len(matched_by_name) + len(matched_by_type) + min(len(remaining_current), len(remaining_enhanced))
+        print(f"  Applied {total_matched} variable updates to {function.getName()}")
+        
     except Exception as e:
-        print(f"Failed to apply variables to {function.getName()}: {e}")
+        print(f"  Failed to apply variables to {function.getName()}: {e}")
+
+def apply_variable_update(symbol, enhanced_var, high_func, high_func_db_util, function):
+    """Apply a single variable update using high-level function representation."""
+    try:
+        old_name = symbol.getName()
+        new_name = enhanced_var['name']
+        
+        # Skip if names are the same and types are the same
+        if old_name == new_name and str(symbol.getDataType()) == enhanced_var['type']:
+            return False
+        
+        # Map the type string to Ghidra data type
+        data_type = map_c_type_to_ghidra_type(enhanced_var['type'])
+        if not data_type:
+            print(f"    Warning: Could not map type '{enhanced_var['type']}' for variable {old_name}")
+            return False
+        
+        # Update the variable in the database
+        high_func_db_util.updateDBVariable(
+            symbol, new_name, data_type, SourceType.USER_DEFINED
+        )
+        
+        # Commit the changes to make them persistent
+        high_func_db_util.commitParamsToDatabase(
+            high_func,
+            True,
+            HighFunctionDBUtil.ReturnCommitOption.COMMIT,
+            SourceType.USER_DEFINED,
+        )
+        
+        return True
+        
+    except Exception as e:
+        print(f"    Failed to update variable {symbol.getName()}: {e}")
+        return False
 
 def map_c_type_to_ghidra_type(type_string):
     """
