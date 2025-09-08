@@ -58,8 +58,16 @@ def save_enhanced_signatures():
         print("Failed to open program with decompiler!")
         return
     
+    function_manager = currentProgram.getFunctionManager()
+    high_func_db_util = HighFunctionDBUtil()
+    
     # Test the decompiler on the first function to verify it's working
-    first_function = function_manager.getFunctions(True).next() if function_manager.getFunctionCount() > 0 else None
+    first_function = None
+    if function_manager.getFunctionCount() > 0:
+        function_iterator = function_manager.getFunctions(True)
+        if function_iterator.hasNext():
+            first_function = function_iterator.next()
+    
     if first_function:
         print(f"Testing decompiler on function: {first_function.getName()}")
         test_results = decompiler.decompileFunction(first_function, 60, None)
@@ -69,9 +77,6 @@ def save_enhanced_signatures():
             print(f"Decompiler test failed: {test_results.getErrorMessage() if test_results else 'No results returned'}")
     else:
         print("No functions found to test decompiler")
-    
-    function_manager = currentProgram.getFunctionManager()
-    high_func_db_util = HighFunctionDBUtil()
     
     matched_functions = 0
     new_functions = 0
