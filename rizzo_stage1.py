@@ -101,16 +101,10 @@ def save_enhanced_signatures():
             new_functions += 1
         
         # Extract enhanced variables with error tracking
-        try:
-            enhanced_variables = get_enhanced_function_variables(function, decompiler, high_func_db_util)
-            if enhanced_variables:
-                variable_extraction_success += 1
-            else:
-                variable_extraction_failed += 1
-        except Exception as e:
-            print(f"Failed to extract variables for {function.getName()}: {e}")
-            enhanced_variables = []
-            variable_extraction_failed += 1
+        enhanced_variables = get_enhanced_function_variables(function, decompiler, high_func_db_util)
+        
+        # Count successful extraction (even if no local variables found - that's still success)
+        variable_extraction_success += 1
         
         # Store enhanced function information (both matched and new functions)
         enhanced_signatures['enhanced_functions'][address] = {
@@ -175,31 +169,19 @@ def get_enhanced_function_variables(function, decompiler, high_func_db_util):
         # Get high-level function representation (using 60 second timeout - compromise between 30 and 120)
         decompiler_results = decompiler.decompileFunction(function, 60, None)
         
-        # Detailed debugging to understand what's happening
-        if not decompiler_results:
-            print(f"Debug: decompileFunction returned None for {function.getName()}")
-        elif not decompiler_results.decompileCompleted():
-            error_msg = decompiler_results.getErrorMessage()
-            print(f"Debug: Decompilation not completed for {function.getName()}: {error_msg}")
-        else:
+        # Check if decompilation was successful
+        if decompiler_results and decompiler_results.decompileCompleted():
             high_func = decompiler_results.getHighFunction()
-            if not high_func:
-                print(f"Debug: No high function available for {function.getName()}")
-            else:
+            if high_func:
                 local_symbol_map = high_func.getLocalSymbolMap()
-                if not local_symbol_map:
-                    print(f"Debug: No local symbol map for {function.getName()}")
-                else:
+                if local_symbol_map:
                     local_symbols = local_symbol_map.getSymbols()
-                    if not local_symbols:
-                        print(f"Debug: No local symbols for {function.getName()}")
-                    else:
-                        non_param_count = 0
+                    if local_symbols:
                         for symbol in local_symbols:
                             # Skip parameters since they're handled separately
                             if symbol.isParameter():
                                 continue
-                            non_param_count += 1
+                                
                             variables.append({
                                 'name': symbol.getName(),
                                 'type': str(symbol.getDataType()),
@@ -208,43 +190,41 @@ def get_enhanced_function_variables(function, decompiler, high_func_db_util):
                                 'storage': str(symbol.getStorage()) if hasattr(symbol, 'getStorage') else ""
                             })
                         
-                        if non_param_count == 0:
-                            print(f"Debug: All symbols were parameters for {function.getName()}")
-                        else:
-                            # Success - return the variables without further warning
-                            return variables
-                    
-        # Only show fallback warning if we actually have an issue
-        if not variables:
-            print(f"Warning: High-level decompilation failed for {function.getName()}, using basic variable extraction")
-            try:
-                local_vars = function.getLocalVariables()
-                for var in local_vars:
-                    variables.append({
-                        'name': var.getName(),
-                        'type': str(var.getDataType()),
-                        'category': 'local',
-                        'is_parameter': False,
-                        'storage': str(var.getVariableStorage()) if hasattr(var, 'getVariableStorage') else ""
-                    })
-            except Exception as e:
-                print(f"Warning: Could not extract variables for {function.getName()}: {e}")
+                        # SUCCESS: Decompilation worked, return variables (even if empty - means no local vars)
+                        return variables
+                    else:
+                        # No symbols at all - this might indicate an issue
+                        print(f"Debug: No symbols found for {function.getName()}")
+                else:
+                    print(f"Debug: No local symbol map for {function.getName()}")
+            else:
+                print(f"Debug: No high function available for {function.getName()}")
+        else:
+            # Only show detailed error info if decompilation actually failed
+            if not decompiler_results:
+                print(f"Debug: decompileFunction returned None for {function.getName()}")
+            else:
+                error_msg = decompiler_results.getErrorMessage()
+                print(f"Debug: Decompilation not completed for {function.getName()}: {error_msg}")
                 
     except Exception as e:
         print(f"Warning: Exception during decompilation for {function.getName()}: {e}")
-        
-        # Final fallback to basic variable extraction
-        try:
-            for var in function.getLocalVariables():
-                variables.append({
-                    'name': var.getName(),
-                    'type': str(var.getDataType()),
-                    'category': 'local',
-                    'is_parameter': False,
-                    'storage': ""
-                })
-        except:
-            pass
+    
+    # Only use basic variable extraction as fallback if high-level decompilation truly failed
+    # (not just when it succeeded but found no local variables)
+    print(f"Warning: High-level decompilation failed for {function.getName()}, using basic variable extraction")
+    try:
+        local_vars = function.getLocalVariables()
+        for var in local_vars:
+            variables.append({
+                'name': var.getName(),
+                'type': str(var.getDataType()),
+                'category': 'local',
+                'is_parameter': False,
+                'storage': str(var.getVariableStorage()) if hasattr(var, 'getVariableStorage') else ""
+            })
+    except Exception as e:
+        print(f"Warning: Could not extract basic variables for {function.getName()}: {e}")
     
     return variables
 
