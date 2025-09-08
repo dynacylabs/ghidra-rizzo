@@ -75,9 +75,8 @@ def apply_enhanced_signatures():
         print(f'  - {total_original_functions} original function definitions')
     
     print('Applying enhanced signatures...')
-    print('Initializing Rizzo for current program...')
     
-    # Create Rizzo instance for the current program
+    # Create Rizzo instance for the current program (this will show its own progress)
     current_rizz = rizzo.Rizzo(currentProgram)
     
     print('Starting signature matching process...')

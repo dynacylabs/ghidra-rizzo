@@ -1060,18 +1060,24 @@ class Rizzo(object):
         self.signature_libary = None
         self.signatures = None
         self._strings = {}
+        
+        print("Initializing Rizzo for current program...")
+        print("Phase 1: Finding strings in program memory...")
         self._find_strings()
 
+        print("Phase 2: Generating signatures for functions and strings...")
         start = time.time()
         self._signatures = self._generate()
         end = time.time()
 
+        print("\nRizzo initialization complete!")
         print("Generated {formal_signatures} formal signatures and {fuzzy_signatures} fuzzy signatures "
-              "for {function_count} functions in {duration} seconds."
+              "for {function_count} functions in {duration:.1f} seconds."
               .format(formal_signatures=len(self._signatures.formal),
                                             fuzzy_signatures=len(self._signatures.fuzzy),
                                             function_count=len(self._signatures.functions),
                                             duration=(end - start)))
+        print("Ready to begin signature matching...\n")
     
     def save(self, signature_file):
         """
@@ -1474,14 +1480,39 @@ class Rizzo(object):
         """
         Find strings in the current program and create signatures for them.
         """
+        print("Scanning program memory for strings...")
+        start_time = time.time()
+        
         memory = self._memory_map.getAllInitializedAddressSet()
         strings = self._flat_api.findStrings(memory, 2, 1, True, True)
+        
+        elapsed = time.time() - start_time
+        print("String scan complete. Found {} strings in {:.1f} seconds.".format(
+            strings.getSize(), elapsed))
+        print("Processing strings for signature generation...")
+
+        string_count = 0
+        total_strings = strings.getSize()
+        start_time = time.time()
 
         for string in strings:
             addr = string.getAddress()
             value = string.getString(self._memory_map)
             xref = self._flat_api.getReferencesTo(addr)
             self._strings[addr.hashCode()] = RizzoString(addr, value, xref)
+            
+            string_count += 1
+            if string_count % 1000 == 0 or string_count == total_strings:
+                elapsed = time.time() - start_time
+                if string_count > 1:
+                    estimated_total = elapsed * total_strings / string_count
+                    remaining = estimated_total - elapsed
+                    print("  Processed {}/{} strings ({:.1f}%) - Elapsed: {:.1f}s, Est. remaining: {:.1f}s".format(
+                        string_count, total_strings, 
+                        (string_count * 100.0) / total_strings,
+                        elapsed, remaining))
+                else:
+                    print("  Processing {} strings...".format(total_strings))
 
     def _get_function_blocks(self, function):
         """
@@ -1743,7 +1774,8 @@ class Rizzo(object):
         # String based signatures
         string_count = 0
         total_strings = len(self._strings)
-        print("Processing {} strings for signature generation...".format(total_strings))
+        print("Generating string-based signatures from {} strings...".format(total_strings))
+        start_time = time.time()
         
         for (str_hash, curr_string) in self._strings.items():
             # Only create signatures on reasonably long strings with one ref.
@@ -1756,15 +1788,25 @@ class Rizzo(object):
                     signatures.add_string(string_hash, entry)
             
             string_count += 1
-            if string_count % 100 == 0 or string_count == total_strings:
-                print("  Processed {}/{} strings".format(string_count, total_strings))
+            if string_count % 500 == 0 or string_count == total_strings:
+                elapsed = time.time() - start_time
+                if string_count > 1:
+                    estimated_total = elapsed * total_strings / string_count
+                    remaining = estimated_total - elapsed
+                    print("  Processed {}/{} strings ({:.1f}%) - Elapsed: {:.1f}s, Est. remaining: {:.1f}s".format(
+                        string_count, total_strings,
+                        (string_count * 100.0) / total_strings,
+                        elapsed, remaining))
+                else:
+                    print("  Processing {} strings...".format(total_strings))
 
         # Formal, fuzzy, and immediate-based function signatures
         all_functions = list(self._function_manager.getFunctions(True))
         total_functions = len(all_functions)
         function_count = 0
         
-        print("Processing {} functions for signature generation...".format(total_functions))
+        print("Generating function-based signatures from {} functions...".format(total_functions))
+        start_time = time.time()
         
         for function in all_functions:
             hashed_function_blocks = self._hash_function(function)
@@ -1816,10 +1858,17 @@ class Rizzo(object):
                 signatures.add_immediate(value, function_entry)
             
             function_count += 1
-            if function_count % 50 == 0 or function_count == total_functions:
-                print("  Processed {}/{} functions ({:.1f}%)".format(
-                    function_count, total_functions, 
-                    (function_count * 100.0) / total_functions))
+            if function_count % 25 == 0 or function_count == total_functions or function_count == 1:
+                elapsed = time.time() - start_time
+                if function_count > 1:
+                    estimated_total = elapsed * total_functions / function_count
+                    remaining = estimated_total - elapsed
+                    print("  Processed {}/{} functions ({:.1f}%) - Elapsed: {:.1f}s, Est. remaining: {:.1f}s".format(
+                        function_count, total_functions, 
+                        (function_count * 100.0) / total_functions,
+                        elapsed, remaining))
+                else:
+                    print("  Starting analysis of {} functions...".format(total_functions))
 
         print("Signature generation complete.")
         signatures.reset_dups()
