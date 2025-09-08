@@ -89,7 +89,7 @@ def apply_enhanced_signatures():
                     enhanced_func_info = enhanced_data['original_functions'].get(matched_func.address)
                 
                 if enhanced_func_info:
-                    success = apply_enhanced_function_definition(
+                    success = apply_enhanced_function_definition_improved(
                         current_function, 
                         enhanced_func_info, 
                         decompiler, 
@@ -195,6 +195,8 @@ def apply_function_variables(function, var_info_list, decompiler, high_func_db_u
         return
         
     try:
+        print(f"  Applying variables to {function.getName()}")
+        
         # Get high-level function representation
         decompiler_results = decompiler.decompileFunction(function, 30, None)
         if not decompiler_results or not decompiler_results.decompileCompleted():
@@ -227,7 +229,7 @@ def apply_function_variables(function, var_info_list, decompiler, high_func_db_u
         
         print(f"  Function {function.getName()}: {len(current_symbols)} current variables, {len(enhanced_vars)} enhanced variables")
         
-        # Pre-analyze for potential conflicts
+        # Pre-analyze for potential conflicts with more detailed checking
         enhanced_name_counts = {}
         for enhanced in enhanced_vars:
             name = enhanced['name']
@@ -238,18 +240,20 @@ def apply_function_variables(function, var_info_list, decompiler, high_func_db_u
             print(f"    ⚠ Warning: Enhanced data contains duplicate variable names: {duplicate_names}")
             print("    → These will be automatically numbered to prevent conflicts")
         
-        # Debug: Show current and enhanced variables
+        # Debug: Show current and enhanced variables with more detail
         if current_symbols:
             print("    Current variables:")
             for i, current in enumerate(current_symbols):
-                print(f"      {i+1}. {current['name']} : {current['type']} (storage: {current['storage']})")
+                storage_info = current['storage'] if current['storage'] else 'no-storage'
+                print(f"      {i+1}. {current['name']} : {current['type']} (storage: {storage_info})")
         
         if enhanced_vars:
             print("    Enhanced variables:")
             for i, enhanced in enumerate(enhanced_vars):
-                print(f"      {i+1}. {enhanced['name']} : {enhanced['type']} (storage: {enhanced.get('storage', 'N/A')})")
+                storage_info = enhanced.get('storage', 'N/A')
+                print(f"      {i+1}. {enhanced['name']} : {enhanced['type']} (storage: {storage_info})")
         
-        # Track names that will be used to prevent conflicts
+        # Track names that will be used to prevent conflicts with improved tracking
         reserved_names = set()
         # Add existing names from symbols we won't modify
         for symbol in local_symbols:
@@ -258,8 +262,10 @@ def apply_function_variables(function, var_info_list, decompiler, high_func_db_u
         # Track matched symbols and enhanced vars to prevent double-matching
         matched_symbols = set()
         used_enhanced_vars = set()
+        successful_updates = 0
         
         # Strategy 1: Try to match by storage location (most reliable)
+        print("    → Strategy 1: Matching by storage location...")
         for current in current_symbols:
             if current['symbol'] in matched_symbols:
                 continue
@@ -276,13 +282,15 @@ def apply_function_variables(function, var_info_list, decompiler, high_func_db_u
                         if success:
                             matched_symbols.add(current['symbol'])
                             used_enhanced_vars.add(i)
+                            successful_updates += 1
                             # Update reserved names
                             reserved_names.discard(current['name'])  # Remove old name
                             reserved_names.add(enhanced['name'])     # Add new name
-                            print(f"    Storage match: {current['name']} -> {enhanced['name']}")
+                            print(f"    ✓ Storage match: {current['name']} -> {enhanced['name']}")
                         break
         
         # Strategy 2: Try to match by name (for variables that weren't renamed)
+        print("    → Strategy 2: Matching by name...")
         for current in current_symbols:
             if current['symbol'] in matched_symbols:
                 continue
@@ -298,10 +306,12 @@ def apply_function_variables(function, var_info_list, decompiler, high_func_db_u
                     if success:
                         matched_symbols.add(current['symbol'])
                         used_enhanced_vars.add(i)
-                        print(f"    Name match: {current['name']} -> {enhanced['name']}")
+                        successful_updates += 1
+                        print(f"    ✓ Name match: {current['name']} -> {enhanced['name']}")
                     break
         
         # Strategy 3: Try to match by type (for similar variables)
+        print("    → Strategy 3: Matching by type...")
         for current in current_symbols:
             if current['symbol'] in matched_symbols:
                 continue
@@ -317,13 +327,15 @@ def apply_function_variables(function, var_info_list, decompiler, high_func_db_u
                     if success:
                         matched_symbols.add(current['symbol'])
                         used_enhanced_vars.add(i)
+                        successful_updates += 1
                         # Update reserved names
                         reserved_names.discard(current['name'])  # Remove old name
                         reserved_names.add(enhanced['name'])     # Add new name
-                        print(f"    Type match: {current['name']} -> {enhanced['name']}")
+                        print(f"    ✓ Type match: {current['name']} -> {enhanced['name']}")
                     break
         
         # Strategy 4: Match remaining variables by position (order)
+        print("    → Strategy 4: Matching by position...")
         remaining_current = [c for c in current_symbols if c['symbol'] not in matched_symbols]
         remaining_enhanced_indices = [i for i in range(len(enhanced_vars)) if i not in used_enhanced_vars]
         
@@ -335,16 +347,26 @@ def apply_function_variables(function, var_info_list, decompiler, high_func_db_u
                 if success:
                     matched_symbols.add(current['symbol'])
                     used_enhanced_vars.add(enhanced_idx)
+                    successful_updates += 1
                     # Update reserved names
                     reserved_names.discard(current['name'])  # Remove old name
                     reserved_names.add(enhanced['name'])     # Add new name
-                    print(f"    Position match: {current['name']} -> {enhanced['name']}")
+                    print(f"    ✓ Position match: {current['name']} -> {enhanced['name']}")
         
         total_matched = len(matched_symbols)
-        print(f"  Applied {total_matched} variable updates to {function.getName()}")
+        print(f"  ✓ Applied {successful_updates}/{total_matched} variable updates to {function.getName()}")
+        
+        # Show summary of unmatched items for debugging
+        unmatched_current = len(current_symbols) - total_matched
+        unmatched_enhanced = len(enhanced_vars) - len(used_enhanced_vars)
+        
+        if unmatched_current > 0 or unmatched_enhanced > 0:
+            print(f"  → {unmatched_current} current variables and {unmatched_enhanced} enhanced variables remain unmatched")
         
     except Exception as e:
-        print(f"  Failed to apply variables to {function.getName()}: {e}")
+        print(f"  ✗ Failed to apply variables to {function.getName()}: {e}")
+        import traceback
+        traceback.print_exc()
 
 def apply_variable_update(symbol, enhanced_var, high_func, high_func_db_util, function, reserved_names):
     """Apply a single variable update using high-level function representation."""
@@ -397,132 +419,386 @@ def apply_variable_update(symbol, enhanced_var, high_func, high_func_db_util, fu
         elif type_needs_update:
             print(f"    Retyping variable: {old_name} ({old_type}) -> ({new_type})")
         
-        # Apply the update using improved approach
+        # Apply the update using improved approach with better transaction management
         success = False
         
         try:
-            # Method 1: Try updateDBVariable with the enhanced approach
-            # Handle the most problematic cases first
+            # Start a transaction for the update
+            transaction_id = function.getProgram().startTransaction("Update Variable")
             
-            if name_needs_update and type_needs_update:
-                # Update both name and type - most likely to cause conflicts
-                try:
-                    high_func_db_util.updateDBVariable(
-                        symbol, final_name, data_type, SourceType.USER_DEFINED
-                    )
-                except Exception as name_type_error:
-                    print(f"    ✗ Combined update failed: {name_type_error}")
-                    # Try type-only update as fallback
+            try:
+                # Method 1: Try updateDBVariable with the enhanced approach
+                # Handle the most problematic cases first
+                
+                if name_needs_update and type_needs_update:
+                    # Update both name and type - most likely to cause conflicts
+                    try:
+                        high_func_db_util.updateDBVariable(
+                            symbol, final_name, data_type, SourceType.USER_DEFINED
+                        )
+                        success = True
+                        print(f"    ✓ Combined update successful: {final_name} : {new_type}")
+                    except Exception as name_type_error:
+                        print(f"    ✗ Combined update failed: {name_type_error}")
+                        # Try type-only update as fallback
+                        try:
+                            high_func_db_util.updateDBVariable(
+                                symbol, old_name, data_type, SourceType.USER_DEFINED
+                            )
+                            success = True
+                            print(f"    ⚠ Applied type update only (name update failed due to: {name_type_error})")
+                        except Exception as type_fallback_error:
+                            print(f"    ✗ Type-only fallback also failed: {type_fallback_error}")
+                            success = False
+                            
+                elif type_needs_update:
+                    # Just update type, keep the name - usually safer
                     try:
                         high_func_db_util.updateDBVariable(
                             symbol, old_name, data_type, SourceType.USER_DEFINED
                         )
-                        print(f"    ⚠ Applied type update only (name update failed due to: {name_type_error})")
-                    except Exception as type_fallback_error:
-                        print(f"    ✗ Type-only fallback also failed: {type_fallback_error}")
+                        success = True
+                        print(f"    ✓ Type update successful: {old_name} : {new_type}")
+                    except Exception as type_error:
+                        print(f"    ✗ Type update failed: {type_error}")
                         success = False
+                    
+                elif name_needs_update:
+                    # Just update name, keep the type - check for duplicates again
+                    try:
+                        high_func_db_util.updateDBVariable(
+                            symbol, final_name, symbol.getDataType(), SourceType.USER_DEFINED
+                        )
+                        success = True
+                        print(f"    ✓ Name update successful: {final_name}")
+                    except Exception as name_error:
+                        if "DuplicateNameException" in str(name_error) or "duplicate" in str(name_error).lower():
+                            print(f"    ✗ Name update failed due to duplicate: {name_error}")
+                            print(f"    → Keeping original name '{old_name}'")
+                            success = False
+                        else:
+                            print(f"    ✗ Name update failed: {name_error}")
+                            success = False
+                
+                # Force commit the changes immediately if we have a high function
+                if high_func and success:
+                    try:
+                        high_func_db_util.commitLocalNamesToDatabase(
+                            high_func, SourceType.USER_DEFINED
+                        )
+                    except Exception as commit_error:
+                        print(f"    Warning: Failed to commit local names: {commit_error}")
+                    
+                    try:
+                        high_func_db_util.commitParamsToDatabase(
+                            high_func,
+                            True,  # overwrite existing
+                            HighFunctionDBUtil.ReturnCommitOption.COMMIT,
+                            SourceType.USER_DEFINED
+                        )
+                    except Exception as commit_error:
+                        print(f"    Warning: Failed to commit params: {commit_error}")
+                
+            except Exception as inner_error:
+                print(f"    ✗ Inner transaction failed: {inner_error}")
+                success = False
+            finally:
+                # Always end the transaction
+                function.getProgram().endTransaction(transaction_id, success)
+            
+            # Verify the update worked if we think it was successful
+            if success:
+                try:
+                    updated_name = symbol.getName()
+                    updated_type = str(symbol.getDataType())
+                    
+                    name_updated = (updated_name == final_name) or not name_needs_update
+                    type_updated = (updated_type == new_type) or not type_needs_update
+                    
+                    if name_updated and type_updated:
+                        print(f"    ✓ Verification successful: {updated_name} : {updated_type}")
+                    else:
+                        # Determine what actually got updated
+                        partial_success = False
+                        status_parts = []
                         
-            elif type_needs_update:
-                # Just update type, keep the name - usually safer
-                high_func_db_util.updateDBVariable(
-                    symbol, old_name, data_type, SourceType.USER_DEFINED
-                )
-                
-            elif name_needs_update:
-                # Just update name, keep the type - check for duplicates again
-                try:
-                    high_func_db_util.updateDBVariable(
-                        symbol, final_name, symbol.getDataType(), SourceType.USER_DEFINED
-                    )
-                except Exception as name_error:
-                    if "DuplicateNameException" in str(name_error):
-                        print(f"    ✗ Name update failed due to duplicate: {name_error}")
-                        print(f"    → Keeping original name '{old_name}'")
-                        success = False
-                    else:
-                        raise name_error
-            
-            # Force commit the changes immediately
-            if high_func:
-                try:
-                    high_func_db_util.commitLocalNamesToDatabase(
-                        high_func, SourceType.USER_DEFINED
-                    )
-                except:
-                    pass  # This might fail in some cases, but that's okay
-                
-                try:
-                    high_func_db_util.commitParamsToDatabase(
-                        high_func,
-                        True,  # overwrite existing
-                        HighFunctionDBUtil.ReturnCommitOption.COMMIT,
-                        SourceType.USER_DEFINED
-                    )
-                except:
-                    pass  # This might fail in some cases, but that's okay
-            
-            # Verify the update worked by checking the symbol again
-            updated_name = symbol.getName()
-            updated_type = str(symbol.getDataType())
-            
-            name_updated = (updated_name == final_name) or not name_needs_update
-            type_updated = (updated_type == new_type) or not type_needs_update
-            
-            if name_updated and type_updated:
-                success = True
-                print(f"    ✓ Successfully updated: {updated_name} : {updated_type}")
-            else:
-                # Determine what actually got updated
-                partial_success = False
-                status_parts = []
-                
-                if name_needs_update:
-                    if updated_name == final_name:
-                        status_parts.append("Name ✓")
-                        partial_success = True
-                    else:
-                        status_parts.append(f"Name ✗ ('{updated_name}' ≠ '{final_name}')")
-                
-                if type_needs_update:
-                    if updated_type == new_type:
-                        status_parts.append("Type ✓")
-                        partial_success = True
-                    else:
-                        status_parts.append(f"Type ✗ ('{updated_type}' ≠ '{new_type}')")
-                
-                status_msg = ", ".join(status_parts)
-                if partial_success:
-                    print(f"    ⚠ Partial success - {status_msg}")
-                    if name_needs_update and updated_name != final_name:
-                        print(f"    → Type update successful, but name update failed (this is a known Ghidra limitation)")
-                    success = True  # Consider partial success as success
-                else:
-                    print(f"    ✗ Update failed: {status_msg}")
+                        if name_needs_update:
+                            if updated_name == final_name:
+                                status_parts.append("Name ✓")
+                                partial_success = True
+                            else:
+                                status_parts.append(f"Name ✗ ('{updated_name}' ≠ '{final_name}')")
+                        
+                        if type_needs_update:
+                            if updated_type == new_type:
+                                status_parts.append("Type ✓")
+                                partial_success = True
+                            else:
+                                status_parts.append(f"Type ✗ ('{updated_type}' ≠ '{new_type}')")
+                        
+                        status_msg = ", ".join(status_parts)
+                        if partial_success:
+                            print(f"    ⚠ Partial verification - {status_msg}")
+                            if name_needs_update and updated_name != final_name:
+                                print(f"    → Variable naming may be limited by Ghidra's decompiler state")
+                        else:
+                            print(f"    ✗ Verification failed: {status_msg}")
+                            success = False
+                            
+                except Exception as verify_error:
+                    print(f"    Warning: Could not verify update: {verify_error}")
             
         except Exception as e:
-            print(f"    ✗ updateDBVariable failed: {e}")
+            print(f"    ✗ Variable update transaction failed: {e}")
             
-            # Fallback: Try alternative approach for type-only updates
+            # Fallback: Try alternative approach for type-only updates without transaction
             if type_needs_update and not name_needs_update:
                 try:
-                    # Sometimes we can set the data type directly
+                    print(f"    → Attempting fallback type update for {old_name}")
                     symbol.setDataType(data_type, SourceType.USER_DEFINED)
                     if str(symbol.getDataType()) == new_type:
                         print(f"    ✓ Fallback type update successful: {old_name} : {new_type}")
                         success = True
                 except Exception as fallback_e:
                     print(f"    ✗ Fallback type update also failed: {fallback_e}")
-            
-            if not success:
+                    success = False
+            else:
                 success = False
         
         return success
         
     except Exception as e:
         print(f"    ✗ Failed to update variable {symbol.getName()}: {e}")
+        
+        # Last resort: Try direct symbol manipulation approach
+        if name_needs_update:
+            try:
+                print(f"    → Attempting direct symbol renaming approach...")
+                
+                # Get the function's symbol table and try direct manipulation
+                symbol_table = function.getProgram().getSymbolTable()
+                variable_symbols = symbol_table.getSymbols(symbol.getName(), function)
+                
+                for var_symbol in variable_symbols:
+                    if var_symbol.getSymbolType().toString() == "LocalVar":
+                        try:
+                            var_symbol.setName(final_name, SourceType.USER_DEFINED)
+                            print(f"    ✓ Direct symbol rename successful: {symbol.getName()} -> {final_name}")
+                            return True
+                        except Exception as direct_error:
+                            print(f"    ✗ Direct symbol rename failed: {direct_error}")
+                            
+            except Exception as direct_approach_error:
+                print(f"    ✗ Direct symbol approach failed: {direct_approach_error}")
+        
+        return False
+
+def get_function_local_variables_alternative(function):
+    """
+    Alternative approach to get local variables using the symbol table.
+    This might work better in some cases where the decompiler approach fails.
+    """
+    try:
+        symbol_table = function.getProgram().getSymbolTable()
+        local_vars = []
+        
+        # Get all symbols in the function's namespace
+        symbols = symbol_table.getSymbols(function)
+        
+        for symbol in symbols:
+            if symbol.getSymbolType().toString() == "LocalVar":
+                local_vars.append({
+                    'symbol': symbol,
+                    'name': symbol.getName(),
+                    'address': symbol.getAddress()
+                })
+        
+        return local_vars
+        
+    except Exception as e:
+        print(f"Alternative variable collection failed: {e}")
+        return []
+
+def apply_enhanced_function_definition_improved(function, enhanced_info, decompiler, high_func_db_util):
+    """
+    Improved version of function definition application with better variable handling.
+    """
+    try:
+        function_name = function.getName()
+        enhanced_name = enhanced_info['name']
+        
+        print(f"Applying enhanced definition to {function_name} -> {enhanced_name}")
+        
+        # 1. Apply function name
+        if enhanced_name and enhanced_name != function_name:
+            function.setName(enhanced_name, SourceType.USER_DEFINED)
+        
+        # 2. Apply return type
+        if enhanced_info.get('return_type'):
+            return_type = map_c_type_to_ghidra_type(enhanced_info['return_type'], function.getProgram())
+            if return_type:
+                function.setReturnType(return_type, SourceType.USER_DEFINED)
+        
+        # 3. Apply function parameters
+        apply_function_parameters(function, enhanced_info.get('parameters', []))
+        
+        # 4. Apply function comment
+        if enhanced_info.get('comment'):
+            apply_function_comment(function, enhanced_info['comment'])
+        
+        # 5. Try multiple approaches for variable naming
+        local_vars = enhanced_info.get('local_variables', [])
+        if local_vars:
+            # First try the decompiler-based approach
+            print(f"  Attempting decompiler-based variable updates...")
+            apply_function_variables(function, local_vars, decompiler, high_func_db_util)
+            
+            # Also try alternative symbol-based approach as backup
+            print(f"  Attempting alternative symbol-based variable updates...")
+            apply_function_variables_alternative(function, local_vars)
+        
+        return True
+        
+    except Exception as e:
+        print(f"Failed to apply enhanced definition to {function.getName()}: {e}")
+        return False
+
+def apply_function_variables_alternative(function, var_info_list):
+    """
+    Alternative approach to apply variable names using direct symbol table manipulation.
+    This uses a completely different approach that might work when decompiler-based methods fail.
+    """
+    if not var_info_list:
+        return
+        
+    try:
+        print(f"  Alternative variable naming for {function.getName()}")
+        
+        # Start a transaction for all variable updates
+        transaction_id = function.getProgram().startTransaction("Alternative Variable Update")
+        updated_count = 0
+        
+        try:
+            # Get local variables using alternative method
+            current_vars = get_function_local_variables_alternative(function)
+            enhanced_vars = [var for var in var_info_list 
+                            if var.get('category') == 'local' and not var.get('is_parameter', False)]
+            
+            if not current_vars and not enhanced_vars:
+                print(f"    No variables found for alternative approach")
+                return
+                
+            print(f"    Found {len(current_vars)} current vars, {len(enhanced_vars)} enhanced vars")
+            
+            # Try to get all local variables from function's variable storage
+            listing = function.getProgram().getListing()
+            variables = function.getAllVariables()
+            
+            local_variables = []
+            for var in variables:
+                if not var.isParameter():  # Only get local variables
+                    local_variables.append(var)
+            
+            print(f"    Found {len(local_variables)} local variables via function.getAllVariables()")
+            
+            # Simple position-based matching for alternative approach
+            for i, enhanced_var in enumerate(enhanced_vars):
+                if i < len(local_variables):
+                    local_var = local_variables[i]
+                    try:
+                        old_name = local_var.getName()
+                        new_name = enhanced_var['name']
+                        
+                        if old_name != new_name:
+                            # Try multiple approaches to rename the variable
+                            renamed = False
+                            
+                            # Approach 1: Direct setName
+                            try:
+                                local_var.setName(new_name, SourceType.USER_DEFINED)
+                                if local_var.getName() == new_name:
+                                    print(f"    ✓ Direct rename successful: {old_name} -> {new_name}")
+                                    renamed = True
+                                    updated_count += 1
+                            except Exception as direct_error:
+                                print(f"    → Direct rename failed: {direct_error}")
+                            
+                            # Approach 2: Try through symbol table if direct failed
+                            if not renamed:
+                                try:
+                                    symbol_table = function.getProgram().getSymbolTable()
+                                    var_symbols = symbol_table.getSymbols(old_name, function)
+                                    
+                                    for var_symbol in var_symbols:
+                                        try:
+                                            var_symbol.setName(new_name, SourceType.USER_DEFINED)
+                                            if var_symbol.getName() == new_name:
+                                                print(f"    ✓ Symbol table rename successful: {old_name} -> {new_name}")
+                                                renamed = True
+                                                updated_count += 1
+                                                break
+                                        except Exception as symbol_error:
+                                            print(f"    → Symbol rename failed: {symbol_error}")
+                                except Exception as symbol_approach_error:
+                                    print(f"    → Symbol table approach failed: {symbol_approach_error}")
+                            
+                            # Approach 3: Try using variable storage directly
+                            if not renamed:
+                                try:
+                                    # Create a new variable with the new name at the same storage
+                                    storage = local_var.getVariableStorage()
+                                    data_type = local_var.getDataType()
+                                    
+                                    # Remove the old variable first
+                                    function.removeVariable(local_var)
+                                    
+                                    # Create new variable with new name
+                                    new_var = function.addLocalVariable(storage, new_name, data_type, SourceType.USER_DEFINED)
+                                    if new_var and new_var.getName() == new_name:
+                                        print(f"    ✓ Recreation rename successful: {old_name} -> {new_name}")
+                                        renamed = True
+                                        updated_count += 1
+                                    
+                                except Exception as recreation_error:
+                                    print(f"    → Variable recreation failed: {recreation_error}")
+                                    # Try to restore the original variable if recreation failed
+                                    try:
+                                        function.addLocalVariable(storage, old_name, data_type, SourceType.USER_DEFINED)
+                                    except:
+                                        pass
+                                        
+                            if not renamed:
+                                print(f"    ✗ All rename approaches failed for: {old_name} -> {new_name}")
+                                
+                        # Also try to update the data type if provided
+                        enhanced_type = enhanced_var.get('type')
+                        if enhanced_type:
+                            try:
+                                new_data_type = map_c_type_to_ghidra_type(enhanced_type, function.getProgram())
+                                if new_data_type and str(local_var.getDataType()) != enhanced_type:
+                                    local_var.setDataType(new_data_type, SourceType.USER_DEFINED)
+                                    if str(local_var.getDataType()) == enhanced_type:
+                                        print(f"    ✓ Type update successful: {local_var.getName()} : {enhanced_type}")
+                            except Exception as type_error:
+                                print(f"    → Type update failed for {local_var.getName()}: {type_error}")
+                                
+                    except Exception as var_error:
+                        print(f"    ✗ Alternative variable processing failed for position {i}: {var_error}")
+                        
+        except Exception as inner_error:
+            print(f"    Alternative approach inner error: {inner_error}")
+        finally:
+            function.getProgram().endTransaction(transaction_id, updated_count > 0)
+            
+        if updated_count > 0:
+            print(f"    ✓ Alternative approach updated {updated_count} variables")
+        else:
+            print(f"    ⚠ Alternative approach: no variables were successfully updated")
+                    
+    except Exception as e:
+        print(f"  Alternative variable application failed: {e}")
         import traceback
         traceback.print_exc()
-        return False
 
 def map_c_type_to_ghidra_type(type_string, program=None):
     """
