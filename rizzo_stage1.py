@@ -46,14 +46,6 @@ def save_enhanced_signatures():
     
     # Set up decompiler for getting enhanced information
     decompiler = DecompInterface()
-    
-    # Configure decompiler options for better reliability
-    options = DecompileOptions()
-    decompiler.setOptions(options)
-    decompiler.toggleSyntaxTree(True)
-    decompiler.toggleCCode(True)
-    decompiler.setSimplificationStyle("decompile")
-    
     if not decompiler.openProgram(currentProgram):
         print("Failed to open program with decompiler!")
         return
@@ -61,22 +53,32 @@ def save_enhanced_signatures():
     function_manager = currentProgram.getFunctionManager()
     high_func_db_util = HighFunctionDBUtil()
     
-    # Test the decompiler on the first function to verify it's working
-    first_function = None
-    if function_manager.getFunctionCount() > 0:
-        function_iterator = function_manager.getFunctions(True)
-        if function_iterator.hasNext():
-            first_function = function_iterator.next()
-    
-    if first_function:
-        print(f"Testing decompiler on function: {first_function.getName()}")
-        test_results = decompiler.decompileFunction(first_function, 60, None)
-        if test_results and test_results.decompileCompleted():
-            print("Decompiler test successful!")
+    # Test the decompiler on a simple function to verify it's working
+    test_count = 0
+    for function in function_manager.getFunctions(True):
+        if test_count >= 5:  # Test on first 5 functions
+            break
+        test_count += 1
+        
+        print(f"Testing decompiler on function: {function.getName()}")
+        test_results = decompiler.decompileFunction(function, 30, None)
+        if test_results:
+            print(f"  - decompileCompleted: {test_results.decompileCompleted()}")
+            if not test_results.decompileCompleted():
+                print(f"  - Error message: {test_results.getErrorMessage()}")
+            else:
+                high_func = test_results.getHighFunction()
+                print(f"  - High function available: {high_func is not None}")
+                if high_func:
+                    local_symbol_map = high_func.getLocalSymbolMap()
+                    if local_symbol_map:
+                        symbols = local_symbol_map.getSymbols()
+                        print(f"  - Local symbols found: {len([s for s in symbols if not s.isParameter()])}")
+                    else:
+                        print(f"  - No local symbol map")
         else:
-            print(f"Decompiler test failed: {test_results.getErrorMessage() if test_results else 'No results returned'}")
-    else:
-        print("No functions found to test decompiler")
+            print(f"  - No results returned")
+        print("")
     
     matched_functions = 0
     new_functions = 0
@@ -185,13 +187,17 @@ def get_enhanced_function_variables(function, decompiler, high_func_db_util):
     variables = []
     
     try:
-        # Get high-level function representation with more robust error handling
-        decompiler_results = decompiler.decompileFunction(function, 60, None)  # Increased timeout
+        # Get high-level function representation with detailed debugging
+        decompiler_results = decompiler.decompileFunction(function, 30, None)
         
         if not decompiler_results:
-            print(f"Warning: Decompiler returned null results for {function.getName()}")
+            # This is now a much less common case with debugging
+            return variables
         elif not decompiler_results.decompileCompleted():
-            print(f"Warning: Decompilation did not complete for {function.getName()}: {decompiler_results.getErrorMessage()}")
+            error_msg = decompiler_results.getErrorMessage()
+            # Only print warning if there's actually an error (not just incomplete decompilation)
+            if error_msg and "timeout" not in error_msg.lower():
+                print(f"Debug: Decompilation incomplete for {function.getName()}: {error_msg}")
         else:
             high_func = decompiler_results.getHighFunction()
             if high_func:
@@ -216,16 +222,22 @@ def get_enhanced_function_variables(function, decompiler, high_func_db_util):
                             except Exception as symbol_error:
                                 print(f"Warning: Error processing symbol in {function.getName()}: {symbol_error}")
                                 continue
+                        
+                        # Success case - return without warning
+                        return variables
                     else:
-                        print(f"Warning: No local symbol map for {function.getName()}")
+                        print(f"Debug: No local symbol map for {function.getName()}")
                 except Exception as symbol_map_error:
                     print(f"Warning: Error accessing symbol map for {function.getName()}: {symbol_map_error}")
-            else:
-                print(f"Warning: No high function available for {function.getName()}")
                     
         # Fallback: if high-level decompilation fails, try basic variable extraction
         if not variables:
-            print(f"Warning: High-level decompilation failed for {function.getName()}, using basic variable extraction")
+            # Only show the warning if we actually tried high-level decompilation
+            if decompiler_results and decompiler_results.decompileCompleted():
+                pass  # Don't show warning if decompilation completed but just had no variables
+            else:
+                print(f"Warning: High-level decompilation failed for {function.getName()}, using basic variable extraction")
+            
             try:
                 local_vars = function.getLocalVariables()
                 for var in local_vars:
