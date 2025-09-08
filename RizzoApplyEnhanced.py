@@ -1,3 +1,5 @@
+# @runtime PyGhidra
+
 # Apply enhanced function signatures with multi-stage matching
 # @author fuzzywalls
 # @category TNS
@@ -66,7 +68,7 @@ def apply_enhanced_signatures():
         if not match_group:
             continue
             
-        for curr_func, matched_func in match_group.iteritems():
+        for curr_func, matched_func in match_group.items():
             try:
                 # Get current program function
                 addr_hex = hex(curr_func.address)

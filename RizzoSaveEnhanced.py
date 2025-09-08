@@ -1,3 +1,5 @@
+# @runtime PyGhidra
+
 # Stage 1: Save enhanced function definitions after manual analysis
 # @author fuzzywalls  
 # @category TNS

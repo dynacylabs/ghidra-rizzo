@@ -1,3 +1,5 @@
+# @runtime PyGhidra
+
 # Stage 0: Save original function signatures before manual analysis
 # @author fuzzywalls
 # @category TNS
