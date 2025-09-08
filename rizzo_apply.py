@@ -23,11 +23,11 @@ if current_dir not in sys.path:
 
 try:
     from rizzo_type_utils import map_c_type_to_ghidra_type
+    print("Using rizzo_type_utils for type mapping")
 except ImportError:
-    # Fallback to basic type mapping if rizzo_type_utils is not available
-    def map_c_type_to_ghidra_type(type_string):
-        from ghidra.program.model.data import IntegerDataType
-        return IntegerDataType()
+    print("rizzo_type_utils not available, using built-in enhanced type mapping")
+    # Enhanced type mapping will be defined later in this file
+    pass
 
 def apply_enhanced_signatures():
     """
@@ -141,7 +141,7 @@ def apply_enhanced_function_definition(function, enhanced_info, decompiler, high
         
         # 2. Apply return type
         if enhanced_info.get('return_type'):
-            return_type = map_c_type_to_ghidra_type(enhanced_info['return_type'])
+            return_type = map_c_type_to_ghidra_type(enhanced_info['return_type'], function.getProgram())
             if return_type:
                 function.setReturnType(return_type, SourceType.USER_DEFINED)
         
@@ -171,9 +171,9 @@ def apply_function_parameters(function, param_info_list):
         
         # Add new parameters
         for param_info in param_info_list:
-            param_type = map_c_type_to_ghidra_type(param_info['type'])
+            param_type = map_c_type_to_ghidra_type(param_info['type'], function.getProgram())
             if param_type:
-                parameter = ParameterImpl(param_info['name'], param_type, currentProgram)
+                parameter = ParameterImpl(param_info['name'], param_type, function.getProgram())
                 function.addParameter(parameter, SourceType.USER_DEFINED)
                 
     except Exception as e:
@@ -328,63 +328,129 @@ def apply_variable_update(symbol, enhanced_var, high_func, high_func_db_util, fu
             return False
         
         # Map the type string to Ghidra data type
-        data_type = map_c_type_to_ghidra_type(new_type)
+        data_type = map_c_type_to_ghidra_type(new_type, function.getProgram())
         if not data_type:
             print(f"    Warning: Could not map type '{new_type}' for variable {old_name}")
             return False
         
+        # Check for name conflicts if we're trying to rename
+        final_name = old_name  # Default to keeping the old name
+        if name_needs_update:
+            # Check if the new name would conflict with existing variables
+            conflict_found = False
+            if high_func:
+                local_symbols = high_func.getLocalSymbolMap().getSymbols()
+                for existing_symbol in local_symbols:
+                    if existing_symbol != symbol and existing_symbol.getName() == new_name:
+                        conflict_found = True
+                        break
+            
+            if not conflict_found:
+                final_name = new_name
+            else:
+                print(f"    Warning: Name '{new_name}' already exists, keeping original name '{old_name}'")
+                name_needs_update = False
+        
         # Show what we're updating
         if name_needs_update and type_needs_update:
-            print(f"    Updating variable: {old_name} ({old_type}) -> {new_name} ({new_type})")
+            print(f"    Updating variable: {old_name} ({old_type}) -> {final_name} ({new_type})")
         elif name_needs_update:
-            print(f"    Renaming variable: {old_name} -> {new_name}")
+            print(f"    Renaming variable: {old_name} -> {final_name}")
         elif type_needs_update:
             print(f"    Retyping variable: {old_name} ({old_type}) -> ({new_type})")
         
-        # For HighSymbol, we need to use updateDBVariable method differently
-        # The key insight is that we need to pass BOTH the name and type, 
-        # even if only one is changing
+        # Apply the update using improved approach
         success = False
         
         try:
-            # Always pass the new name (even if it's the same) and new data type
-            high_func_db_util.updateDBVariable(
-                symbol, new_name, data_type, SourceType.USER_DEFINED
-            )
+            # Method 1: Try updateDBVariable with the enhanced approach
+            if name_needs_update and type_needs_update:
+                # Update both name and type
+                high_func_db_util.updateDBVariable(
+                    symbol, final_name, data_type, SourceType.USER_DEFINED
+                )
+            elif type_needs_update:
+                # Just update type, keep the name
+                high_func_db_util.updateDBVariable(
+                    symbol, old_name, data_type, SourceType.USER_DEFINED
+                )
+            elif name_needs_update:
+                # Just update name, keep the type
+                high_func_db_util.updateDBVariable(
+                    symbol, final_name, symbol.getDataType(), SourceType.USER_DEFINED
+                )
             
-            # Commit the changes to make them persistent
-            # Use COMMIT_LOCALS option specifically for local variables
-            high_func_db_util.commitLocalNamesToDatabase(
-                high_func, SourceType.USER_DEFINED
-            )
-            
-            high_func_db_util.commitParamsToDatabase(
-                high_func,
-                True,
-                HighFunctionDBUtil.ReturnCommitOption.COMMIT,
-                SourceType.USER_DEFINED,
-            )
+            # Force commit the changes immediately
+            if high_func:
+                try:
+                    high_func_db_util.commitLocalNamesToDatabase(
+                        high_func, SourceType.USER_DEFINED
+                    )
+                except:
+                    pass  # This might fail in some cases, but that's okay
+                
+                try:
+                    high_func_db_util.commitParamsToDatabase(
+                        high_func,
+                        True,  # overwrite existing
+                        HighFunctionDBUtil.ReturnCommitOption.COMMIT,
+                        SourceType.USER_DEFINED
+                    )
+                except:
+                    pass  # This might fail in some cases, but that's okay
             
             # Verify the update worked by checking the symbol again
             updated_name = symbol.getName()
             updated_type = str(symbol.getDataType())
             
-            name_updated = updated_name == new_name or not name_needs_update
-            type_updated = updated_type == new_type or not type_needs_update
+            name_updated = (updated_name == final_name) or not name_needs_update
+            type_updated = (updated_type == new_type) or not type_needs_update
             
             if name_updated and type_updated:
                 success = True
                 print(f"    ✓ Successfully updated: {updated_name} : {updated_type}")
             else:
-                print(f"    ⚠ Partial success - Name: '{updated_name}' (wanted '{new_name}'), Type: '{updated_type}' (wanted '{new_type}')")
-                # If type updated but name didn't, that's still partial success
-                if type_updated and not name_updated:
-                    print(f"    → Type update successful, but name update failed (this is a known Ghidra limitation)")
-                success = type_updated  # Consider it successful if at least type worked
+                # Determine what actually got updated
+                partial_success = False
+                status_parts = []
+                
+                if name_needs_update:
+                    if updated_name == final_name:
+                        status_parts.append("Name ✓")
+                        partial_success = True
+                    else:
+                        status_parts.append(f"Name ✗ ('{updated_name}' ≠ '{final_name}')")
+                
+                if type_needs_update:
+                    if updated_type == new_type:
+                        status_parts.append("Type ✓")
+                        partial_success = True
+                    else:
+                        status_parts.append(f"Type ✗ ('{updated_type}' ≠ '{new_type}')")
+                
+                status_msg = ", ".join(status_parts)
+                if partial_success:
+                    print(f"    ⚠ Partial success: {status_msg}")
+                    success = True  # Consider partial success as success
+                else:
+                    print(f"    ✗ Update failed: {status_msg}")
             
         except Exception as e:
             print(f"    ✗ updateDBVariable failed: {e}")
-            success = False
+            
+            # Fallback: Try alternative approach for type-only updates
+            if type_needs_update and not name_needs_update:
+                try:
+                    # Sometimes we can set the data type directly
+                    symbol.setDataType(data_type, SourceType.USER_DEFINED)
+                    if str(symbol.getDataType()) == new_type:
+                        print(f"    ✓ Fallback type update successful: {old_name} : {new_type}")
+                        success = True
+                except Exception as fallback_e:
+                    print(f"    ✗ Fallback type update also failed: {fallback_e}")
+            
+            if not success:
+                success = False
         
         return success
         
@@ -394,46 +460,104 @@ def apply_variable_update(symbol, enhanced_var, high_func, high_func_db_util, fu
         traceback.print_exc()
         return False
 
-def map_c_type_to_ghidra_type(type_string):
+def map_c_type_to_ghidra_type(type_string, program=None):
     """
-    Map C data type strings to corresponding Ghidra data types.
-    This is a simplified version - you may want to import the full version from ai_auto_analysis.py
+    Enhanced mapping of C data type strings to corresponding Ghidra data types.
+    Supports custom types, arrays, and more complete type system.
     """
     from ghidra.program.model.data import (
         IntegerDataType, VoidDataType, CharDataType, ShortDataType,
         LongDataType, FloatDataType, DoubleDataType, PointerDataType,
         UnsignedIntegerDataType, UnsignedCharDataType, UnsignedShortDataType,
-        UnsignedLongDataType, BooleanDataType
+        UnsignedLongDataType, BooleanDataType, ArrayDataType, Undefined8DataType,
+        LongLongDataType, UnsignedLongLongDataType
     )
     
     if not type_string:
         return IntegerDataType()
     
-    type_string = type_string.strip().lower()
+    original_type_string = type_string.strip()
+    type_string = original_type_string.lower()
     
-    # Handle basic types
+    # Handle arrays first (e.g., "int[5]", "uint[2]")
+    if '[' in type_string and ']' in type_string:
+        try:
+            base_type_str = type_string.split('[')[0].strip()
+            array_size_str = type_string.split('[')[1].split(']')[0].strip()
+            
+            base_type = map_c_type_to_ghidra_type(base_type_str, program)
+            if base_type and array_size_str.isdigit():
+                array_size = int(array_size_str)
+                return ArrayDataType(base_type, array_size, base_type.getLength())
+        except Exception as e:
+            print(f"    Warning: Failed to parse array type '{original_type_string}': {e}")
+    
+    # Handle pointers (before basic type mapping)
+    if type_string.endswith('*'):
+        base_type_str = type_string[:-1].strip()
+        base_type = map_c_type_to_ghidra_type(base_type_str, program)
+        return PointerDataType(base_type) if base_type else PointerDataType()
+    
+    # Enhanced basic types mapping
     type_mapping = {
         'void': VoidDataType(),
         'int': IntegerDataType(),
+        'uint': UnsignedIntegerDataType(),
+        'unsigned': UnsignedIntegerDataType(),
+        'unsigned int': UnsignedIntegerDataType(),
         'char': CharDataType(),
+        'uchar': UnsignedCharDataType(),
+        'unsigned char': UnsignedCharDataType(),
         'short': ShortDataType(),
+        'ushort': UnsignedShortDataType(),
+        'unsigned short': UnsignedShortDataType(),
         'long': LongDataType(),
+        'ulong': UnsignedLongDataType(),
+        'unsigned long': UnsignedLongDataType(),
+        'long long': LongLongDataType(),
+        'longlong': LongLongDataType(),
+        'ulonglong': UnsignedLongLongDataType(),
+        'unsigned long long': UnsignedLongLongDataType(),
         'float': FloatDataType(),
         'double': DoubleDataType(),
-        'unsigned int': UnsignedIntegerDataType(),
-        'unsigned char': UnsignedCharDataType(),
-        'unsigned short': UnsignedShortDataType(),
-        'unsigned long': UnsignedLongDataType(),
         'bool': BooleanDataType(),
         'boolean': BooleanDataType(),
+        '_bool': BooleanDataType(),
+        'undefined8': Undefined8DataType(),
     }
     
-    # Handle pointers
-    if type_string.endswith('*'):
-        base_type = map_c_type_to_ghidra_type(type_string[:-1].strip())
-        return PointerDataType(base_type) if base_type else PointerDataType()
+    # Check if it's a known basic type
+    mapped_type = type_mapping.get(type_string)
+    if mapped_type:
+        return mapped_type
     
-    return type_mapping.get(type_string, IntegerDataType())
+    # Try to find custom/existing types in the program's data type manager
+    if program:
+        try:
+            dtm = program.getDataTypeManager()
+            
+            # Search for the type by name (case-insensitive search)
+            existing_type = dtm.getDataType(original_type_string)
+            if existing_type:
+                return existing_type
+                
+            # Try different case variations
+            for name_variant in [original_type_string, original_type_string.upper(), original_type_string.lower()]:
+                existing_type = dtm.getDataType(name_variant)
+                if existing_type:
+                    return existing_type
+            
+            # Search in built-in categories
+            for category in dtm.getAllDataTypes():
+                if category.getName().lower() == type_string:
+                    return category
+                    
+        except Exception as e:
+            print(f"    Warning: Error searching for custom type '{original_type_string}': {e}")
+    
+    # Fallback: return int for unknown types but warn about it
+    print(f"    Warning: Unknown type '{original_type_string}', using int as fallback")
+    return IntegerDataType()
 
 # Run the enhanced apply process
 apply_enhanced_signatures()
