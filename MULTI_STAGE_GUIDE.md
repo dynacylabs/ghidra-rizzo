@@ -54,10 +54,15 @@ Manual analysis complete → Run RizzoSaveEnhanced.py → firmware.riz1
 - Parameter types
 - Parameter order
 
-### Local Variables  
-- Variable names
+### Local Variables (Enhanced)
+- Variable names (with intelligent matching)
 - Variable data types
-- Variable categories
+- Variable storage locations
+- Multiple matching strategies for accuracy:
+  1. Storage location matching (most reliable)
+  2. Name matching (for unchanged variables)
+  3. Type matching (for similar variables)
+  4. Position matching (fallback)
 
 ## Helper Tools
 
@@ -67,6 +72,13 @@ Manual analysis complete → Run RizzoSaveEnhanced.py → firmware.riz1
 - Lists existing signature files
 - Provides next-step recommendations
 - Shows analysis progress
+
+### Variable Extraction Test
+**Script**: `RizzoTestVariableExtraction.py`
+- Tests variable extraction on current function
+- Helps debug variable capture issues
+- Shows both basic and high-level variable extraction
+- Displays decompiled code for verification
 
 ## Best Practices
 
@@ -95,6 +107,17 @@ Manual analysis complete → Run RizzoSaveEnhanced.py → firmware.riz1
 **"Type mapping errors"**
 - Custom data types may need to be imported separately
 - Check rizzo_type_utils.py for supported types
+
+**"Variables not being restored"**
+- Run RizzoTestVariableExtraction.py on a test function to debug
+- Check if decompilation is working properly
+- Verify that high-level function representation is accessible
+- Some functions may not decompile due to complexity
+
+**"Variable names don't match"**
+- The system uses multiple matching strategies (storage, name, type, position)
+- Storage location matching is most reliable
+- Variables may be matched even if names changed during analysis
 
 ### File Compatibility
 

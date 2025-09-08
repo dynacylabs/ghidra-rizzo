@@ -7,6 +7,7 @@ import rizzo
 import pickle
 import time
 from ghidra.program.model.symbol import SourceType
+from ghidra.app.decompiler import DecompInterface
 
 def save_original_signatures():
     """
@@ -23,6 +24,10 @@ def save_original_signatures():
     # Create standard Rizzo signatures for matching purposes
     rizz = rizzo.Rizzo(currentProgram)
     
+    # Set up decompiler for accessing high-level function information
+    decompiler = DecompInterface()
+    decompiler.openProgram(currentProgram)
+    
     # Create enhanced signature data structure that includes original function info
     original_signatures = {
         'rizzo_signatures': rizz._signatures,  # Standard Rizzo signatures for matching
@@ -34,7 +39,14 @@ def save_original_signatures():
     # Capture original function information for each function
     function_manager = currentProgram.getFunctionManager()
     
+    total_functions = function_manager.getFunctionCount()
+    current_function = 0
+    
     for function in function_manager.getFunctions(True):
+        current_function += 1
+        if current_function % 50 == 0:
+            print(f"Processing function {current_function}/{total_functions}: {function.getName()}")
+            
         address = int(function.getEntryPoint().toString(), 16)
         
         # Store original function information
@@ -44,8 +56,10 @@ def save_original_signatures():
             'parameters': get_function_parameters(function),
             'return_type': str(function.getReturnType()) if function.getReturnType() else 'void',
             'comment': get_function_comment(function),
-            'local_variables': get_function_variables(function)
+            'local_variables': get_function_variables_high_level(function, decompiler)
         }
+    
+    decompiler.dispose()
     
     print(f"Saving original signatures for {len(original_signatures['original_functions'])} functions to {file_path}...")
     
@@ -69,7 +83,8 @@ def get_function_parameters(function):
         params.append({
             'name': param.getName(),
             'type': str(param.getDataType()),
-            'comment': param.getComment() or ""
+            'comment': param.getComment() or "",
+            'ordinal': param.getOrdinal()
         })
     return params
 
@@ -83,18 +98,60 @@ def get_function_comment(function):
         pass
     return ""
 
-def get_function_variables(function):
-    """Extract local variable information."""
+def get_function_variables_high_level(function, decompiler):
+    """Extract local variable information using high-level function representation."""
     variables = []
+    
     try:
-        for var in function.getLocalVariables():
-            variables.append({
-                'name': var.getName(),
-                'type': str(var.getDataType()),
-                'comment': var.getComment() or ""
-            })
-    except:
-        pass
+        # Get high-level function representation
+        decompiler_results = decompiler.decompileFunction(function, 30, None)
+        if decompiler_results and decompiler_results.decompileCompleted():
+            high_func = decompiler_results.getHighFunction()
+            if high_func:
+                local_symbols = high_func.getLocalSymbolMap().getSymbols()
+                for symbol in local_symbols:
+                    # Skip parameters since they're handled separately
+                    if symbol.isParameter():
+                        continue
+                        
+                    variables.append({
+                        'name': symbol.getName(),
+                        'type': str(symbol.getDataType()),
+                        'category': 'local',
+                        'is_parameter': symbol.isParameter(),
+                        'storage': str(symbol.getStorage()) if hasattr(symbol, 'getStorage') else ""
+                    })
+                    
+        # Fallback: if high-level decompilation fails, try basic variable extraction
+        if not variables:
+            try:
+                for var in function.getLocalVariables():
+                    variables.append({
+                        'name': var.getName(),
+                        'type': str(var.getDataType()),
+                        'category': 'local',
+                        'is_parameter': False,
+                        'storage': str(var.getVariableStorage()) if hasattr(var, 'getVariableStorage') else ""
+                    })
+            except Exception as e:
+                print(f"Warning: Could not extract variables for {function.getName()}: {e}")
+                
+    except Exception as e:
+        print(f"Warning: Could not extract high-level variables for {function.getName()}: {e}")
+        
+        # Final fallback to basic variable extraction
+        try:
+            for var in function.getLocalVariables():
+                variables.append({
+                    'name': var.getName(),
+                    'type': str(var.getDataType()),
+                    'category': 'local',
+                    'is_parameter': False,
+                    'storage': ""
+                })
+        except:
+            pass
+    
     return variables
 
 # Run the stage 0 process
