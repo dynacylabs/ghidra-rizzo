@@ -1,3 +1,5 @@
+# @runtime PyGhidra
+
 # Debug script for testing variable updates on current function
 # @author fuzzywalls
 # @category TNS
