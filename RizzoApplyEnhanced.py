@@ -227,6 +227,17 @@ def apply_function_variables(function, var_info_list, decompiler, high_func_db_u
         
         print(f"  Function {function.getName()}: {len(current_symbols)} current variables, {len(enhanced_vars)} enhanced variables")
         
+        # Debug: Show current and enhanced variables
+        if current_symbols:
+            print("    Current variables:")
+            for i, current in enumerate(current_symbols):
+                print(f"      {i+1}. {current['name']} : {current['type']} (storage: {current['storage']})")
+        
+        if enhanced_vars:
+            print("    Enhanced variables:")
+            for i, enhanced in enumerate(enhanced_vars):
+                print(f"      {i+1}. {enhanced['name']} : {enhanced['type']} (storage: {enhanced.get('storage', 'N/A')})")
+        
         # Strategy 1: Try to match by storage location (most reliable)
         matched_by_storage = set()
         for current in current_symbols:
@@ -299,34 +310,94 @@ def apply_variable_update(symbol, enhanced_var, high_func, high_func_db_util, fu
     try:
         old_name = symbol.getName()
         new_name = enhanced_var['name']
+        old_type = str(symbol.getDataType())
+        new_type = enhanced_var['type']
         
-        # Skip if names are the same and types are the same
-        if old_name == new_name and str(symbol.getDataType()) == enhanced_var['type']:
+        # Check what needs to be updated
+        name_needs_update = old_name != new_name
+        type_needs_update = old_type != new_type
+        
+        # Skip if nothing needs updating
+        if not name_needs_update and not type_needs_update:
             return False
         
         # Map the type string to Ghidra data type
-        data_type = map_c_type_to_ghidra_type(enhanced_var['type'])
+        data_type = map_c_type_to_ghidra_type(new_type)
         if not data_type:
-            print(f"    Warning: Could not map type '{enhanced_var['type']}' for variable {old_name}")
+            print(f"    Warning: Could not map type '{new_type}' for variable {old_name}")
             return False
         
-        # Update the variable in the database
-        high_func_db_util.updateDBVariable(
-            symbol, new_name, data_type, SourceType.USER_DEFINED
-        )
+        # Show what we're updating
+        if name_needs_update and type_needs_update:
+            print(f"    Updating variable: {old_name} ({old_type}) -> {new_name} ({new_type})")
+        elif name_needs_update:
+            print(f"    Renaming variable: {old_name} -> {new_name}")
+        elif type_needs_update:
+            print(f"    Retyping variable: {old_name} ({old_type}) -> ({new_type})")
         
-        # Commit the changes to make them persistent
-        high_func_db_util.commitParamsToDatabase(
-            high_func,
-            True,
-            HighFunctionDBUtil.ReturnCommitOption.COMMIT,
-            SourceType.USER_DEFINED,
-        )
+        # Try multiple approaches to update the variable
+        success = False
         
-        return True
+        # Method 1: Use updateDBVariable (preferred method)
+        try:
+            high_func_db_util.updateDBVariable(
+                symbol, new_name, data_type, SourceType.USER_DEFINED
+            )
+            
+            # Commit the changes to make them persistent
+            high_func_db_util.commitParamsToDatabase(
+                high_func,
+                True,
+                HighFunctionDBUtil.ReturnCommitOption.COMMIT,
+                SourceType.USER_DEFINED,
+            )
+            
+            # Verify the update worked by checking the symbol again
+            updated_name = symbol.getName()
+            updated_type = str(symbol.getDataType())
+            
+            name_updated = updated_name == new_name or not name_needs_update
+            type_updated = updated_type == new_type or not type_needs_update
+            
+            if name_updated and type_updated:
+                success = True
+                print(f"    Successfully updated using updateDBVariable: {updated_name} : {updated_type}")
+            else:
+                print(f"    updateDBVariable partial success - Name: {updated_name} (wanted {new_name}), Type: {updated_type} (wanted {new_type})")
+                success = name_updated or type_updated  # Partial success is still success
+            
+        except Exception as e1:
+            print(f"    Method 1 (updateDBVariable) failed: {e1}")
+            
+            # Method 2: Try updating symbol name directly if it has setName method
+            try:
+                if hasattr(symbol, 'setName') and name_needs_update:
+                    symbol.setName(new_name, SourceType.USER_DEFINED)
+                    print(f"    Successfully renamed using setName")
+                    success = True
+            except Exception as e2:
+                print(f"    Method 2 (setName) failed: {e2}")
+                
+            # Method 3: Try updating via the variable if accessible
+            try:
+                if hasattr(symbol, 'getVariable'):
+                    variable = symbol.getVariable()
+                    if variable:
+                        if name_needs_update and hasattr(variable, 'setName'):
+                            variable.setName(new_name, SourceType.USER_DEFINED)
+                        if type_needs_update and hasattr(variable, 'setDataType'):
+                            variable.setDataType(data_type, SourceType.USER_DEFINED)
+                        print(f"    Successfully updated using variable methods")
+                        success = True
+            except Exception as e3:
+                print(f"    Method 3 (variable methods) failed: {e3}")
+        
+        return success
         
     except Exception as e:
         print(f"    Failed to update variable {symbol.getName()}: {e}")
+        import traceback
+        traceback.print_exc()
         return False
 
 def map_c_type_to_ghidra_type(type_string):
