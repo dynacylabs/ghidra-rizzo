@@ -47,13 +47,39 @@ def apply_enhanced_signatures():
     with open(enhanced_file.path, 'rb') as f:
         enhanced_data = pickle.load(f)
     
-    print('Applying enhanced signatures...')
+    # Show loaded signature statistics
+    original_funcs = len(enhanced_data.get('original_functions', {}))
+    enhanced_funcs = len(enhanced_data.get('enhanced_functions', {}))
+    print(f"Loaded enhanced signatures: {original_funcs} original functions, {enhanced_funcs} enhanced functions")
+    
+    print('Building current program signatures...')
     
     # Create Rizzo instance for the current program
     current_rizz = rizzo.Rizzo(currentProgram)
+    current_func_count = len(current_rizz._signatures.functions)
+    print(f"Current program has {current_func_count} functions")
+    
+    print('Finding signature matches...')
     
     # Find matches using the original signatures
     signature_matches = current_rizz._find_match(enhanced_data['rizzo_signatures'])
+    
+    # Count total matches across all match types
+    total_matches = 0
+    for match_group in signature_matches:
+        if match_group:
+            total_matches += len(match_group)
+    
+    print(f"Found {total_matches} total signature matches")
+    
+    if total_matches == 0:
+        print("No signature matches found. Check that:")
+        print("  - The enhanced signatures are from a similar program")
+        print("  - The target program has been analyzed")
+        print("  - The signature file is not corrupted")
+        return
+    
+    print('Setting up decompiler and utilities...')
     
     # Set up components for applying enhanced function definitions
     decompiler = DecompInterface()
@@ -63,13 +89,26 @@ def apply_enhanced_signatures():
     enhanced_count = 0
     renamed_count = 0
     variable_updates = 0
+    processed_functions = 0
+    
+    print(f"Processing {total_matches} matched functions...")
     
     # Process all signature matches
-    for match_group in signature_matches:
+    for match_type_idx, match_group in enumerate(signature_matches):
         if not match_group:
             continue
+        
+        match_type_names = ["formal", "string", "immediate", "fuzzy"]
+        match_type = match_type_names[match_type_idx] if match_type_idx < len(match_type_names) else f"type_{match_type_idx}"
+        print(f"Processing {len(match_group)} {match_type} matches...")
             
-        for curr_func, matched_func in match_group.items():
+        for func_idx, (curr_func, matched_func) in enumerate(match_group.items()):
+            processed_functions += 1
+            
+            # Progress indicator every 10 functions or for the first/last few
+            if (func_idx + 1) % 10 == 0 or func_idx < 3 or func_idx >= len(match_group) - 3:
+                print(f"  [{match_type}] Processing function {func_idx + 1}/{len(match_group)} (total: {processed_functions}/{total_matches})")
+            
             try:
                 # Get current program function
                 addr_hex = hex(curr_func.address)
@@ -79,6 +118,7 @@ def apply_enhanced_signatures():
                 current_function = currentProgram.getFunctionManager().getFunctionAt(curr_addr)
                 
                 if not current_function:
+                    print(f"    Warning: Could not find function at {addr_hex}")
                     continue
                 
                 # Find enhanced function definition
@@ -87,6 +127,8 @@ def apply_enhanced_signatures():
                 if not enhanced_func_info:
                     # Fall back to original function info if no enhanced version
                     enhanced_func_info = enhanced_data['original_functions'].get(matched_func.address)
+                    if enhanced_func_info:
+                        print(f"    Note: Using original function info for {current_function.getName()} (no enhanced version)")
                 
                 if enhanced_func_info:
                     success = apply_enhanced_function_definition(
@@ -107,14 +149,33 @@ def apply_enhanced_signatures():
                             variable_updates += var_count
                         
             except Exception as e:
-                print(f"Error applying enhanced signature: {e}")
+                print(f"    Error applying enhanced signature to function: {e}")
                 continue
+        
+        print(f"  Completed {match_type} matches: {enhanced_count} functions enhanced so far")
     
+    print("Cleaning up...")
     decompiler.dispose()
     
-    print(f"Applied enhanced definitions to {enhanced_count} functions")
-    print(f"Renamed {renamed_count} functions")
-    print(f"Applied variable updates for {variable_updates} variables")
+    print("=" * 60)
+    print("ENHANCED SIGNATURE APPLICATION COMPLETE")
+    print("=" * 60)
+    print(f"Total functions processed: {processed_functions}")
+    print(f"Successfully enhanced: {enhanced_count}")
+    print(f"Functions renamed: {renamed_count}")
+    print(f"Variable updates attempted: {variable_updates}")
+    
+    if enhanced_count > 0:
+        success_rate = (enhanced_count / processed_functions) * 100
+        print(f"Success rate: {success_rate:.1f}%")
+    
+    if enhanced_count == 0:
+        print("No functions were enhanced. Possible issues:")
+        print("  - Signature file may not match this program")
+        print("  - Functions may already have the same names/types")
+        print("  - Database update permissions may be restricted")
+    
+    print("=" * 60)
 
 def apply_enhanced_function_definition(function, enhanced_info, decompiler, high_func_db_util):
     """
@@ -146,15 +207,26 @@ def apply_enhanced_function_definition(function, enhanced_info, decompiler, high
                 function.setReturnType(return_type, SourceType.USER_DEFINED)
         
         # 3. Apply function parameters
-        apply_function_parameters(function, enhanced_info.get('parameters', []))
+        param_count = len(enhanced_info.get('parameters', []))
+        if param_count > 0:
+            print(f"  Applying {param_count} parameters...")
+            apply_function_parameters(function, enhanced_info.get('parameters', []))
         
         # 4. Apply function comment
         if enhanced_info.get('comment'):
+            print(f"  Applying function comment...")
             apply_function_comment(function, enhanced_info['comment'])
         
         # 5. Apply local variable names and types
-        apply_function_variables(function, enhanced_info.get('local_variables', []), 
-                               decompiler, high_func_db_util)
+        var_count = len(enhanced_info.get('local_variables', []))
+        if var_count > 0:
+            print(f"  Processing {var_count} local variables...")
+            apply_function_variables(function, enhanced_info.get('local_variables', []), 
+                                   decompiler, high_func_db_util)
+        else:
+            print(f"  No local variables to process")
+        
+        print(f"  ✓ Successfully processed {enhanced_name}")
         
         return True
         
@@ -192,19 +264,23 @@ def apply_function_comment(function, comment):
 def apply_function_variables(function, var_info_list, decompiler, high_func_db_util):
     """Apply local variable names and types to a function using high-level representation."""
     if not var_info_list:
+        print(f"    No variables to process for {function.getName()}")
         return
         
     try:
+        print(f"    Decompiling function for variable access...")
         # Get high-level function representation
         decompiler_results = decompiler.decompileFunction(function, 30, None)
         if not decompiler_results or not decompiler_results.decompileCompleted():
-            print(f"  Could not decompile {function.getName()} for variable restoration")
+            print(f"    ✗ Could not decompile {function.getName()} for variable restoration")
             return
             
         high_func = decompiler_results.getHighFunction()
         if not high_func:
-            print(f"  Could not get high-level function for {function.getName()}")
+            print(f"    ✗ Could not get high-level function for {function.getName()}")
             return
+            
+        print(f"    ✓ Successfully decompiled {function.getName()}")
             
         local_symbols = high_func.getLocalSymbolMap().getSymbols()
         
@@ -225,7 +301,7 @@ def apply_function_variables(function, var_info_list, decompiler, high_func_db_u
             if var_info.get('category') == 'local' and not var_info.get('is_parameter', False):
                 enhanced_vars.append(var_info)
         
-        print(f"  Function {function.getName()}: {len(current_symbols)} current variables, {len(enhanced_vars)} enhanced variables")
+        print(f"    Found {len(current_symbols)} current variables, {len(enhanced_vars)} enhanced variables to apply")
         
         # Debug: Show current and enhanced variables
         if current_symbols:
@@ -239,8 +315,11 @@ def apply_function_variables(function, var_info_list, decompiler, high_func_db_u
                 print(f"      {i+1}. {enhanced['name']} : {enhanced['type']} (storage: {enhanced.get('storage', 'N/A')})")
         
         # Strategy 1: Try to match by storage location (most reliable)
+        print(f"    Step 1: Matching by storage location...")
         matched_by_storage = set()
         matched_enhanced_storage = set()
+        storage_matches = 0
+        
         for current in current_symbols:
             if current['symbol'] in matched_by_storage:
                 continue
@@ -254,12 +333,18 @@ def apply_function_variables(function, var_info_list, decompiler, high_func_db_u
                         if success:
                             matched_by_storage.add(current['symbol'])
                             matched_enhanced_storage.add(enhanced_storage)
-                            print(f"    Storage match: {current['name']} -> {enhanced['name']}")
+                            storage_matches += 1
+                            print(f"      Storage match {storage_matches}: {current['name']} -> {enhanced['name']}")
                         break
         
+        print(f"    Step 1 complete: {storage_matches} storage-based matches")
+        
         # Strategy 2: Try to match by name (for variables that weren't renamed)
+        print(f"    Step 2: Matching by variable name...")
         matched_by_name = set()
         matched_enhanced_name = set()
+        name_matches = 0
+        
         for current in current_symbols:
             if current['symbol'] in matched_by_storage:
                 continue
@@ -272,12 +357,18 @@ def apply_function_variables(function, var_info_list, decompiler, high_func_db_u
                     if success:
                         matched_by_name.add(current['symbol'])
                         matched_enhanced_name.add(enhanced_name)
-                        print(f"    Name match: {current['name']} -> {enhanced['name']}")
+                        name_matches += 1
+                        print(f"      Name match {name_matches}: {current['name']} -> {enhanced['name']}")
                     break
         
+        print(f"    Step 2 complete: {name_matches} name-based matches")
+        
         # Strategy 3: Try to match by type (for similar variables)
+        print(f"    Step 3: Matching by variable type...")
         matched_by_type = set()
         matched_enhanced_type = set()
+        type_matches = 0
+        
         for current in current_symbols:
             if current['symbol'] in matched_by_storage or current['symbol'] in matched_by_name:
                 continue
@@ -291,25 +382,37 @@ def apply_function_variables(function, var_info_list, decompiler, high_func_db_u
                     if success:
                         matched_by_type.add(current['symbol'])
                         matched_enhanced_type.add(enhanced_key)
-                        print(f"    Type match: {current['name']} -> {enhanced['name']}")
+                        type_matches += 1
+                        print(f"      Type match {type_matches}: {current['name']} -> {enhanced['name']}")
                     break
+        
+        print(f"    Step 3 complete: {type_matches} type-based matches")
         
         # Strategy 4: Match remaining variables by position (order)
         remaining_current = [c for c in current_symbols if c['symbol'] not in matched_by_storage and c['symbol'] not in matched_by_name and c['symbol'] not in matched_by_type]
         remaining_enhanced = [e for e in enhanced_vars if e.get('storage', '') not in matched_enhanced_storage and e['name'] not in matched_enhanced_name and f"{e['type']}_{e['name']}" not in matched_enhanced_type]
         
-        for i, current in enumerate(remaining_current):
-            if i < len(remaining_enhanced):
-                enhanced = remaining_enhanced[i]
-                success = apply_variable_update(current['symbol'], enhanced, high_func, high_func_db_util, function)
-                if success:
-                    print(f"    Position match: {current['name']} -> {enhanced['name']}")
+        position_matches = 0
+        if remaining_current and remaining_enhanced:
+            print(f"    Step 4: Matching {min(len(remaining_current), len(remaining_enhanced))} remaining variables by position...")
+            
+            for i, current in enumerate(remaining_current):
+                if i < len(remaining_enhanced):
+                    enhanced = remaining_enhanced[i]
+                    success = apply_variable_update(current['symbol'], enhanced, high_func, high_func_db_util, function)
+                    if success:
+                        position_matches += 1
+                        print(f"      Position match {position_matches}: {current['name']} -> {enhanced['name']}")
+        else:
+            print(f"    Step 4: No remaining variables to match by position")
         
-        total_matched = len(matched_by_storage) + len(matched_by_name) + len(matched_by_type) + min(len(remaining_current), len(remaining_enhanced))
-        print(f"  Applied {total_matched} variable updates to {function.getName()}")
+        total_matched = storage_matches + name_matches + type_matches + position_matches
+        print(f"    ✓ Variable processing complete: {total_matched} total matches ({storage_matches} storage, {name_matches} name, {type_matches} type, {position_matches} position)")
         
     except Exception as e:
-        print(f"  Failed to apply variables to {function.getName()}: {e}")
+        print(f"    ✗ Failed to apply variables to {function.getName()}: {e}")
+        import traceback
+        traceback.print_exc()
 
 def apply_variable_update(symbol, enhanced_var, high_func, high_func_db_util, function):
     """Apply a single variable update using high-level function representation."""
@@ -351,6 +454,8 @@ def apply_variable_update(symbol, enhanced_var, high_func, high_func_db_util, fu
             high_func_db_util.updateDBVariable(
                 symbol, new_name, data_type, SourceType.USER_DEFINED
             )
+            
+            print(f"      Committing database changes...")
             
             # Commit the changes to make them persistent
             # Use COMMIT_LOCALS option specifically for local variables

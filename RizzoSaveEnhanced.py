@@ -33,6 +33,8 @@ def save_enhanced_signatures():
         original_data = pickle.load(f)
     
     print('Building enhanced signatures (Stage 1), this may take a few minutes...')
+    print('This process captures analyzed function definitions after manual analysis.')
+    print('')
     
     # Create enhanced signature data structure
     enhanced_signatures = {
@@ -44,9 +46,13 @@ def save_enhanced_signatures():
         'original_timestamp': original_data.get('timestamp', 0)
     }
     
+    print('Step 1: Setting up decompiler...')
     # Set up decompiler for getting enhanced information
     decompiler = DecompInterface()
     decompiler.openProgram(currentProgram)
+    print('✓ Decompiler ready')
+    
+    print('Step 2: Processing enhanced function information...')
     
     function_manager = currentProgram.getFunctionManager()
     high_func_db_util = HighFunctionDBUtil()
@@ -59,10 +65,16 @@ def save_enhanced_signatures():
     total_functions = function_manager.getFunctionCount()
     current_function = 0
     
+    print(f'Processing {total_functions} functions...')
+    
     for function in function_manager.getFunctions(True):
         current_function += 1
-        if current_function % 50 == 0:
-            print(f"Processing function {current_function}/{total_functions}: {function.getName()}")
+        if current_function % 25 == 0 or current_function <= 5 or current_function >= total_functions - 5:
+            progress = (current_function / total_functions) * 100
+            print(f"  [{current_function:4d}/{total_functions}] ({progress:5.1f}%) Processing: {function.getName()}")
+        elif current_function % 100 == 0:
+            progress = (current_function / total_functions) * 100
+            print(f"  [{current_function:4d}/{total_functions}] ({progress:5.1f}%) Still processing...")
             
         address = int(function.getEntryPoint().toString(), 16)
         
@@ -98,17 +110,27 @@ def save_enhanced_signatures():
     
     decompiler.dispose()
     
+    print('')
+    print('Step 3: Saving enhanced signatures...')
     print(f"Saving enhanced signatures to {enhanced_file_path}...")
     
     with open(enhanced_file_path, 'wb') as f:
         pickle.dump(enhanced_signatures, f)
     
-    print("Stage 1 complete. Enhanced signatures saved.")
-    print(f"Functions from original: {matched_functions}")
-    print(f"New functions found: {new_functions}")
-    print(f"Total enhanced functions: {len(enhanced_signatures['enhanced_functions'])}")
-    print(f"Variable extraction successful: {variable_extraction_success}")
-    print(f"Variable extraction failed: {variable_extraction_failed}")
+    print('')
+    print('=' * 50)
+    print("✓ Stage 1 complete. Enhanced signatures saved.")
+    print('=' * 50)
+    print('')
+    print('Statistics:')
+    print(f"  Functions from original: {matched_functions}")
+    print(f"  New functions found: {new_functions}")
+    print(f"  Total enhanced functions: {len(enhanced_signatures['enhanced_functions'])}")
+    print(f"  Variable extraction successful: {variable_extraction_success}")
+    print(f"  Variable extraction failed: {variable_extraction_failed}")
+    print('')
+    print(f"Enhanced signature file saved: {enhanced_file_path}")
+    print('Use this file with RizzoApplyEnhanced.py to restore enhanced function definitions.')
 
 def get_function_signature_string(function):
     """Get a string representation of the function signature."""

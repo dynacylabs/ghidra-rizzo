@@ -22,13 +22,19 @@ def save_original_signatures():
         file_path += '.riz0'
     
     print('Building original Rizzo signatures (Stage 0), this may take a few minutes...')
+    print('This process captures unanalyzed function signatures for later matching.')
+    print('')
     
     # Create standard Rizzo signatures for matching purposes
+    print('Step 1: Generating Rizzo signatures...')
     rizz = rizzo.Rizzo(currentProgram)
+    print(f'✓ Generated signatures for {len(rizz._signatures.functions)} functions')
     
+    print('Step 2: Setting up decompiler...')
     # Set up decompiler for accessing high-level function information
     decompiler = DecompInterface()
     decompiler.openProgram(currentProgram)
+    print('✓ Decompiler ready')
     
     # Create enhanced signature data structure that includes original function info
     original_signatures = {
@@ -38,16 +44,23 @@ def save_original_signatures():
         'program_name': currentProgram.getName()
     }
     
+    print('Step 3: Extracting original function information...')
     # Capture original function information for each function
     function_manager = currentProgram.getFunctionManager()
     
     total_functions = function_manager.getFunctionCount()
     current_function = 0
     
+    print(f'Processing {total_functions} functions...')
+    
     for function in function_manager.getFunctions(True):
         current_function += 1
-        if current_function % 50 == 0:
-            print(f"Processing function {current_function}/{total_functions}: {function.getName()}")
+        if current_function % 25 == 0 or current_function <= 5 or current_function >= total_functions - 5:
+            progress = (current_function / total_functions) * 100
+            print(f"  [{current_function:4d}/{total_functions}] ({progress:5.1f}%) Processing: {function.getName()}")
+        elif current_function % 100 == 0:
+            progress = (current_function / total_functions) * 100
+            print(f"  [{current_function:4d}/{total_functions}] ({progress:5.1f}%) Still processing...")
             
         address = int(function.getEntryPoint().toString(), 16)
         
