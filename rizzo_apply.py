@@ -7,6 +7,7 @@
 
 import pickle
 import time
+import json
 import rizzo
 from ghidra.program.model.symbol import SourceType
 from ghidra.program.model.listing import ParameterImpl
@@ -238,7 +239,7 @@ def apply_enhanced_function_definition(function, enhanced_info, decompiler, high
             apply_function_comment(function, enhanced_info['comment'])
         
         # 5. Apply local variable names and types
-        apply_function_variables(function, enhanced_info.get('local_variables', []), 
+        apply_function_variables_simple(function, enhanced_info.get('local_variables', []), 
                                decompiler, high_func_db_util)
         
         return True
@@ -274,8 +275,11 @@ def apply_function_comment(function, comment):
     except Exception as e:
         print(f"Failed to apply comment to {function.getName()}: {e}")
 
-def apply_function_variables(function, var_info_list, decompiler, high_func_db_util):
-    """Apply local variable names and types to a function using high-level representation."""
+def apply_function_variables_simple(function, var_info_list, decompiler, high_func_db_util):
+    """
+    Apply local variable names and types to a function using the working approach from ai_auto_analysis.py.
+    This is a simplified version that directly updates variables without complex matching.
+    """
     if not var_info_list:
         return
         
@@ -283,9 +287,9 @@ def apply_function_variables(function, var_info_list, decompiler, high_func_db_u
         print(f"  Applying variables to {function.getName()}")
         
         # Get high-level function representation
-        decompiler_results = decompiler.decompileFunction(function, 30, None)
+        decompiler_results = decompiler.decompileFunction(function, 120, None)
         if not decompiler_results or not decompiler_results.decompileCompleted():
-            print(f"  Could not decompile {function.getName()} for variable restoration")
+            print(f"  Could not decompile {function.getName()} for variable updates")
             return
             
         high_func = decompiler_results.getHighFunction()
@@ -295,163 +299,72 @@ def apply_function_variables(function, var_info_list, decompiler, high_func_db_u
             
         local_symbols = high_func.getLocalSymbolMap().getSymbols()
         
-        # Create lists of current symbols and enhanced variables for matching
-        current_symbols = []
-        enhanced_vars = []
-        
-        for symbol in local_symbols:
-            if not symbol.isParameter():  # Skip parameters
-                current_symbols.append({
-                    'symbol': symbol,
-                    'name': symbol.getName(),
-                    'type': str(symbol.getDataType()),
-                    'storage': str(symbol.getStorage()) if hasattr(symbol, 'getStorage') else ""
-                })
-        
+        # Create a mapping from variable names to their enhanced information
+        var_mapping = {}
         for var_info in var_info_list:
             if var_info.get('category') == 'local' and not var_info.get('is_parameter', False):
-                enhanced_vars.append(var_info)
+                var_mapping[var_info.get('original_name', var_info['name'])] = var_info
         
-        print(f"  Function {function.getName()}: {len(current_symbols)} current variables, {len(enhanced_vars)} enhanced variables")
-        
-        # Pre-analyze for potential conflicts with more detailed checking
-        enhanced_name_counts = {}
-        for enhanced in enhanced_vars:
-            name = enhanced['name']
-            enhanced_name_counts[name] = enhanced_name_counts.get(name, 0) + 1
-        
-        duplicate_names = {name: count for name, count in enhanced_name_counts.items() if count > 1}
-        if duplicate_names:
-            print(f"    ⚠ Warning: Enhanced data contains duplicate variable names: {duplicate_names}")
-            print("    → These will be automatically numbered to prevent conflicts")
-        
-        # Debug: Show current and enhanced variables with more detail
-        if current_symbols:
-            print("    Current variables:")
-            for i, current in enumerate(current_symbols):
-                storage_info = current['storage'] if current['storage'] else 'no-storage'
-                print(f"      {i+1}. {current['name']} : {current['type']} (storage: {storage_info})")
-        
-        if enhanced_vars:
-            print("    Enhanced variables:")
-            for i, enhanced in enumerate(enhanced_vars):
-                storage_info = enhanced.get('storage', 'N/A')
-                print(f"      {i+1}. {enhanced['name']} : {enhanced['type']} (storage: {storage_info})")
-        
-        # Track names that will be used to prevent conflicts with improved tracking
-        reserved_names = set()
-        # Add existing names from symbols we won't modify
-        for symbol in local_symbols:
-            reserved_names.add(symbol.getName())
-        
-        # Track matched symbols and enhanced vars to prevent double-matching
-        matched_symbols = set()
-        used_enhanced_vars = set()
         successful_updates = 0
         
-        # Strategy 1: Try to match by storage location (most reliable)
-        print("    → Strategy 1: Matching by storage location...")
-        for current in current_symbols:
-            if current['symbol'] in matched_symbols:
-                continue
-                
-            current_storage = current['storage']
-            if current_storage and current_storage != "":
-                for i, enhanced in enumerate(enhanced_vars):
-                    if i in used_enhanced_vars:
-                        continue
-                        
-                    enhanced_storage = enhanced.get('storage', '')
-                    if enhanced_storage == current_storage:
-                        success = apply_variable_update(current['symbol'], enhanced, high_func, high_func_db_util, function, reserved_names)
-                        if success:
-                            matched_symbols.add(current['symbol'])
-                            used_enhanced_vars.add(i)
-                            successful_updates += 1
-                            # Update reserved names
-                            reserved_names.discard(current['name'])  # Remove old name
-                            reserved_names.add(enhanced['name'])     # Add new name
-                            print(f"    ✓ Storage match: {current['name']} -> {enhanced['name']}")
-                        break
-        
-        # Strategy 2: Try to match by name (for variables that weren't renamed)
-        print("    → Strategy 2: Matching by name...")
-        for current in current_symbols:
-            if current['symbol'] in matched_symbols:
-                continue
-                
-            current_name = current['name']
-            for i, enhanced in enumerate(enhanced_vars):
-                if i in used_enhanced_vars:
+        # Process each local symbol
+        for symbol in local_symbols:
+            try:
+                # Skip parameters
+                if hasattr(symbol, 'isParameter') and symbol.isParameter():
                     continue
                     
-                enhanced_name = enhanced['name']
-                if enhanced_name == current_name:
-                    success = apply_variable_update(current['symbol'], enhanced, high_func, high_func_db_util, function, reserved_names)
-                    if success:
-                        matched_symbols.add(current['symbol'])
-                        used_enhanced_vars.add(i)
-                        successful_updates += 1
-                        print(f"    ✓ Name match: {current['name']} -> {enhanced['name']}")
-                    break
-        
-        # Strategy 3: Try to match by type (for similar variables)
-        print("    → Strategy 3: Matching by type...")
-        for current in current_symbols:
-            if current['symbol'] in matched_symbols:
-                continue
+                # Get current variable name
+                old_name = symbol.getName()
                 
-            current_type = current['type']
-            for i, enhanced in enumerate(enhanced_vars):
-                if i in used_enhanced_vars:
+                # Look up enhanced information for this variable
+                var_info = var_mapping.get(old_name)
+                if not var_info:
                     continue
-                    
-                enhanced_type = enhanced['type']
-                if enhanced_type == current_type:
-                    success = apply_variable_update(current['symbol'], enhanced, high_func, high_func_db_util, function, reserved_names)
-                    if success:
-                        matched_symbols.add(current['symbol'])
-                        used_enhanced_vars.add(i)
-                        successful_updates += 1
-                        # Update reserved names
-                        reserved_names.discard(current['name'])  # Remove old name
-                        reserved_names.add(enhanced['name'])     # Add new name
-                        print(f"    ✓ Type match: {current['name']} -> {enhanced['name']}")
-                    break
+                
+                new_name = var_info['name']
+                data_type_string = var_info['type']
+
+                # Convert C type string to Ghidra data type
+                data_type = _map_c_type_to_ghidra_type(data_type_string)
+                if not data_type:
+                    print(f"    Warning: Could not map type '{data_type_string}' for variable {old_name}")
+                    continue
+                
+                # Update variable in Ghidra database using the working approach
+                high_func_db_util.updateDBVariable(
+                    symbol, new_name, data_type, SourceType.USER_DEFINED
+                )
+                
+                print(f"    ✓ Updated variable: {old_name} ({symbol.getDataType()}) -> {new_name} ({data_type_string})")
+                successful_updates += 1
+                
+            except Exception as e:
+                print(f"    ✗ Failed to update variable {old_name}: {e}")
+                continue
         
-        # Strategy 4: Match remaining variables by position (order)
-        print("    → Strategy 4: Matching by position...")
-        remaining_current = [c for c in current_symbols if c['symbol'] not in matched_symbols]
-        remaining_enhanced_indices = [i for i in range(len(enhanced_vars)) if i not in used_enhanced_vars]
-        
-        for i, current in enumerate(remaining_current):
-            if i < len(remaining_enhanced_indices):
-                enhanced_idx = remaining_enhanced_indices[i]
-                enhanced = enhanced_vars[enhanced_idx]
-                success = apply_variable_update(current['symbol'], enhanced, high_func, high_func_db_util, function, reserved_names)
-                if success:
-                    matched_symbols.add(current['symbol'])
-                    used_enhanced_vars.add(enhanced_idx)
-                    successful_updates += 1
-                    # Update reserved names
-                    reserved_names.discard(current['name'])  # Remove old name
-                    reserved_names.add(enhanced['name'])     # Add new name
-                    print(f"    ✓ Position match: {current['name']} -> {enhanced['name']}")
-        
-        total_matched = len(matched_symbols)
-        print(f"  ✓ Applied {successful_updates}/{total_matched} variable updates to {function.getName()}")
-        
-        # Show summary of unmatched items for debugging
-        unmatched_current = len(current_symbols) - total_matched
-        unmatched_enhanced = len(enhanced_vars) - len(used_enhanced_vars)
-        
-        if unmatched_current > 0 or unmatched_enhanced > 0:
-            print(f"  → {unmatched_current} current variables and {unmatched_enhanced} enhanced variables remain unmatched")
+        # Commit parameter changes to make them persistent (from ai_auto_analysis.py approach)
+        try:
+            high_func_db_util.commitParamsToDatabase(
+                high_func,
+                True,  # overwrite existing
+                HighFunctionDBUtil.ReturnCommitOption.COMMIT,
+                SourceType.USER_DEFINED,
+            )
+            print(f"  ✓ Committed {successful_updates} variable updates for {function.getName()}")
+        except Exception as commit_error:
+            print(f"  Warning: Failed to commit variable updates: {commit_error}")
         
     except Exception as e:
         print(f"  ✗ Failed to apply variables to {function.getName()}: {e}")
-        import traceback
-        traceback.print_exc()
+
+# Keep the old function for backwards compatibility but deprecate it
+def apply_function_variables(function, var_info_list, decompiler, high_func_db_util):
+    """
+    Deprecated: Use apply_function_variables_simple instead.
+    This was the complex version that had reliability issues.
+    """
+    return apply_function_variables_simple(function, var_info_list, decompiler, high_func_db_util)
 
 def apply_variable_update(symbol, enhanced_var, high_func, high_func_db_util, function, reserved_names):
     """Apply a single variable update using high-level function representation."""
@@ -938,7 +851,7 @@ def apply_enhanced_function_definition_improved(function, enhanced_info, decompi
         if local_vars:
             # First try the decompiler-based approach
             print(f"  Attempting decompiler-based variable updates...")
-            apply_function_variables(function, local_vars, decompiler, high_func_db_util)
+            apply_function_variables_simple(function, local_vars, decompiler, high_func_db_util)
             
             # Also try alternative symbol-based approach as backup
             print(f"  Attempting alternative symbol-based variable updates...")
@@ -1146,104 +1059,99 @@ def apply_function_variables_alternative(function, var_info_list):
         import traceback
         traceback.print_exc()
 
-def map_c_type_to_ghidra_type(type_string, program=None):
+def _map_c_type_to_ghidra_type(type_string: str):
     """
-    Enhanced mapping of C data type strings to corresponding Ghidra data types.
-    Supports custom types, arrays, and more complete type system.
+    Map C data type strings to corresponding Ghidra data types.
+    This is the working version from ai_auto_analysis.py.
     """
     from ghidra.program.model.data import (
         IntegerDataType, VoidDataType, CharDataType, ShortDataType,
         LongDataType, FloatDataType, DoubleDataType, PointerDataType,
         UnsignedIntegerDataType, UnsignedCharDataType, UnsignedShortDataType,
-        UnsignedLongDataType, BooleanDataType, ArrayDataType, Undefined8DataType,
+        UnsignedLongDataType, BooleanDataType, ArrayDataType,
         LongLongDataType, UnsignedLongLongDataType
     )
     
-    if not type_string:
+    # Normalize the input string to lowercase and remove whitespace
+    normalized_type = type_string.lower().strip()
+
+    # Handle basic signed integer types
+    if normalized_type in ["int", "signed int"]:
         return IntegerDataType()
-    
-    original_type_string = type_string.strip()
-    type_string = original_type_string.lower()
-    
-    # Handle arrays first (e.g., "int[5]", "uint[2]")
-    if '[' in type_string and ']' in type_string:
-        try:
-            base_type_str = type_string.split('[')[0].strip()
-            array_size_str = type_string.split('[')[1].split(']')[0].strip()
-            
-            base_type = map_c_type_to_ghidra_type(base_type_str, program)
-            if base_type and array_size_str.isdigit():
-                array_size = int(array_size_str)
-                return ArrayDataType(base_type, array_size, base_type.getLength())
-        except Exception as e:
-            print(f"    Warning: Failed to parse array type '{original_type_string}': {e}")
-    
-    # Handle pointers (before basic type mapping)
-    if type_string.endswith('*'):
-        base_type_str = type_string[:-1].strip()
-        base_type = map_c_type_to_ghidra_type(base_type_str, program)
-        return PointerDataType(base_type) if base_type else PointerDataType()
-    
-    # Enhanced basic types mapping
-    type_mapping = {
-        'void': VoidDataType(),
-        'int': IntegerDataType(),
-        'uint': UnsignedIntegerDataType(),
-        'unsigned': UnsignedIntegerDataType(),
-        'unsigned int': UnsignedIntegerDataType(),
-        'char': CharDataType(),
-        'uchar': UnsignedCharDataType(),
-        'unsigned char': UnsignedCharDataType(),
-        'short': ShortDataType(),
-        'ushort': UnsignedShortDataType(),
-        'unsigned short': UnsignedShortDataType(),
-        'long': LongDataType(),
-        'ulong': UnsignedLongDataType(),
-        'unsigned long': UnsignedLongDataType(),
-        'long long': LongLongDataType(),
-        'longlong': LongLongDataType(),
-        'ulonglong': UnsignedLongLongDataType(),
-        'unsigned long long': UnsignedLongLongDataType(),
-        'float': FloatDataType(),
-        'double': DoubleDataType(),
-        'bool': BooleanDataType(),
-        'boolean': BooleanDataType(),
-        '_bool': BooleanDataType(),
-        'undefined8': Undefined8DataType(),
-    }
-    
-    # Check if it's a known basic type
-    mapped_type = type_mapping.get(type_string)
-    if mapped_type:
-        return mapped_type
-    
-    # Try to find custom/existing types in the program's data type manager
-    if program:
-        try:
-            dtm = program.getDataTypeManager()
-            
-            # Search for the type by name (case-insensitive search)
-            existing_type = dtm.getDataType(original_type_string)
-            if existing_type:
-                return existing_type
-                
-            # Try different case variations
-            for name_variant in [original_type_string, original_type_string.upper(), original_type_string.lower()]:
-                existing_type = dtm.getDataType(name_variant)
-                if existing_type:
-                    return existing_type
-            
-            # Search in built-in categories
-            for category in dtm.getAllDataTypes():
-                if category.getName().lower() == type_string:
-                    return category
-                    
-        except Exception as e:
-            print(f"    Warning: Error searching for custom type '{original_type_string}': {e}")
-    
-    # Fallback: return int for unknown types but warn about it
-    print(f"    Warning: Unknown type '{original_type_string}', using int as fallback")
+    elif normalized_type in ["unsigned int", "uint"]:
+        return UnsignedIntegerDataType()
+    elif normalized_type in ["short", "signed short"]:
+        return ShortDataType()
+    elif normalized_type in ["unsigned short", "ushort"]:
+        return UnsignedShortDataType()
+    elif normalized_type in ["long", "signed long"]:
+        return LongDataType()
+    elif normalized_type in ["unsigned long", "ulong"]:
+        return UnsignedLongDataType()
+        
+    # Handle character types
+    elif normalized_type in ["char", "signed char"]:
+        return CharDataType()
+    elif normalized_type in ["unsigned char", "uchar", "byte"]:
+        return UnsignedCharDataType()
+        
+    # Handle boolean and floating-point types
+    elif normalized_type in ["bool", "boolean"]:
+        return BooleanDataType()
+    elif normalized_type in ["float"]:
+        return FloatDataType()
+    elif normalized_type in ["double"]:
+        return DoubleDataType()
+    elif normalized_type == "void":
+        return VoidDataType()
+
+    # Handle pointer types (recursively process base type)
+    elif normalized_type.endswith("*"):
+        base_type = _map_c_type_to_ghidra_type(normalized_type[:-1].strip())
+        if base_type is not None:
+            return PointerDataType(base_type)
+        else:
+            return PointerDataType(VoidDataType())
+
+    # Handle fixed-width integer types (C99/C11 standard types)
+    elif normalized_type in ["int8", "int8_t", "signed char"]:
+        return CharDataType()
+    elif normalized_type in ["uint8", "uint8_t"]:
+        return UnsignedCharDataType()
+    elif normalized_type in ["int16", "int16_t", "short", "signed short"]:
+        return ShortDataType()
+    elif normalized_type in ["uint16", "uint16_t"]:
+        return UnsignedShortDataType()
+    elif normalized_type in ["int32", "int32_t", "int"]:
+        return IntegerDataType()
+    elif normalized_type in ["uint32", "uint32_t", "unsigned int"]:
+        return UnsignedIntegerDataType()
+    elif normalized_type in ["int64", "int64_t", "long long"]:
+        return LongLongDataType()
+    elif normalized_type in ["uint64", "uint64_t", "unsigned long long"]:
+        return UnsignedLongLongDataType()
+
+    # Handle common string types
+    elif normalized_type in ["char *", "string"]:
+        return PointerDataType(CharDataType())
+
+    # Handle array types (basic parsing)
+    elif "[" in normalized_type and "]" in normalized_type:
+        base_type_part, _, array_size_part = normalized_type.partition("[")
+        base_type = _map_c_type_to_ghidra_type(base_type_part.strip())
+        if base_type is not None and array_size_part[:-1].isdigit():
+            array_size = int(array_size_part[:-1])
+            return ArrayDataType(base_type, array_size, base_type.getLength())
+
+    # Default fallback for unrecognized types
     return IntegerDataType()
+
+def map_c_type_to_ghidra_type(type_string, program=None):
+    """
+    Wrapper function for compatibility with existing code.
+    Uses the working implementation from ai_auto_analysis.py.
+    """
+    return _map_c_type_to_ghidra_type(type_string)
 
 # Run the enhanced apply process
 apply_enhanced_signatures()

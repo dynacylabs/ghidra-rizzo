@@ -1488,11 +1488,11 @@ class Rizzo(object):
         
         elapsed = time.time() - start_time
         print("String scan complete. Found {} strings in {:.1f} seconds.".format(
-            strings.getSize(), elapsed))
+            strings.size(), elapsed))
         print("Processing strings for signature generation...")
 
         string_count = 0
-        total_strings = strings.getSize()
+        total_strings = strings.size()
         start_time = time.time()
 
         for string in strings:
