@@ -43,7 +43,6 @@ def export_memory_layout():
             'address_size': space.getAddressableUnitSize(),
             'type': space.getType(),
             'unique': space.isUniqueSpace(),
-            'harvard_space': space.isHarvardSpace(),
             'loaded_space': space.isLoadedMemorySpace(),
             'memory_space': space.isMemorySpace(),
             'non_loaded_space': space.isNonLoadedMemorySpace(),
