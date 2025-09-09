@@ -1,4 +1,4 @@
-#@runtime PyGhidra
+# @runtime PyGhidra
 import os
 import time
 import pickle
